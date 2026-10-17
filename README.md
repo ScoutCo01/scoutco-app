@@ -53,6 +53,12 @@ Changes are live as soon as you type them. Clients see them the next time they o
 
 ## Sending the app to a client
 
+**Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:
+
+```
+={"Link"; ARRAYFORMULA(IF(A2:A="", "", "https://scoutco01.github.io/scoutco-app/?code=" & A2:A))}
+```
+
 Text each client their personal link:
 
 ```
