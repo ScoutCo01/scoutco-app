@@ -13,7 +13,7 @@ A free, ScoutCo-branded app your clients save to their phone's home screen. Each
 1. Go to [sheets.new](https://sheets.new) to create a new Google Sheet, and name it **ScoutCo Programs**.
 2. In the sheet, open **Extensions → Apps Script**.
 3. Open the [plain-text script](https://raw.githubusercontent.com/ScoutCo01/scoutco-app/main/google-apps-script/Code.gs), select all (Ctrl+A or Cmd+A) and copy it. Delete everything in the Apps Script code box, paste, and click the 💾 **Save** icon.
-4. Go back to your sheet and refresh the page. A **ScoutCo** menu appears at the top. Choose **ScoutCo → Set up tabs (first time only)**.
+4. Go back to your sheet and refresh the page. A **ScoutCo** menu appears at the top. Choose **ScoutCo → Set up tabs**. It's safe to run again: it only adds tabs that are missing.
    - Google will ask you to authorise the script. Click **Continue**, pick your account, then **Advanced → Go to (unsafe)** → **Allow**. The "unsafe" warning appears because you wrote the script yourself and Google hasn't reviewed it. It only reads and writes this one sheet.
 5. Back in **Apps Script**, click **Deploy → New deployment**.
    - Click the ⚙️ next to "Select type" and choose **Web app**.
@@ -43,6 +43,7 @@ To stop a client's access, change **Active** to `No`.
 | Column | What to put | Example |
 |---|---|---|
 | Program | The program's name (usually the client's name) | Jake Smith |
+| Block | Training block (optional) | Block 1 |
 | Week | Groups days into tabs | Week 1 |
 | Day | Session name | Day 1 · Lower |
 | Order | Exercise order or label | A1, A2, B1 |
@@ -50,6 +51,12 @@ To stop a client's access, change **Active** to `No`.
 | Sets / Reps / Load / Tempo / Rest | Anything you like, or leave blank | 4 / 6 / 80% / 3-1-1 / 2 min |
 | Notes | Coaching cues | Brace hard |
 | Video | A YouTube or Instagram link | https://youtu.be/... |
+
+### Blocks and dates (Blocks tab)
+
+Program blocks in advance. On the **Blocks** tab, add one row per block: **Program** (client name), **Block** (same name as on the Programs tab) and **Start date** (the first day of Week 1). Week 2 starts 7 days later, and so on.
+
+When a client opens the app, it jumps to the current block and week. They can still tap any block, week or session. Blocks with no start date still show, but the app won't pick them automatically.
 
 Changes are live as soon as you type them. Clients see them the next time they open the app.
 

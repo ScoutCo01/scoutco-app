@@ -5,11 +5,12 @@
   var KEY_CODE = "scoutco.code";
   var KEY_CACHE = "scoutco.program";
   var KEY_WEEK = "scoutco.week";
+  var KEY_BLOCK = "scoutco.block";
   var KEY_TICKS = "scoutco.ticks";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { code: null, data: null, week: null, openDays: {} };
+  var state = { code: null, data: null, block: null, week: null, openDays: {} };
 
   // ---------- storage helpers (never let storage errors break the app) ----------
   function load(key, fallback) {
@@ -107,12 +108,17 @@
   function setData(data, offline) {
     state.data = data;
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
-    var weeks = (data.program && data.program.weeks) || [];
-    var savedWeek = load(KEY_WEEK, null);
-    var names = weeks.map(function (w) { return w.name; });
-    state.week = names.indexOf(state.week) !== -1 ? state.week
-      : names.indexOf(savedWeek) !== -1 ? savedWeek
-      : (weeks.length ? weeks[0].name : null);
+    var blocks = getBlocks(data);
+    // On a new day, go back to the current week (the coach's dates win over the last tab tapped).
+    var today = todayDay().toDateString();
+    if (state.openedOn !== today) { state.openedOn = today; state.manual = false; state.openDays = {}; }
+    var now = state.manual ? null : currentByDate(blocks);
+    if (now) {
+      state.block = now.block; state.week = now.week;
+    } else {
+      state.block = pick(blocks, state.block, load(KEY_BLOCK, null));
+      state.week = pick(currentWeeks(), state.week, load(KEY_WEEK, null));
+    }
     $("offlineNotice").classList.toggle("hidden", !offline);
     render();
     show("programView");
@@ -120,16 +126,68 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK);
-    state = { code: null, data: null, week: null, openDays: {} };
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK);
+    state = { code: null, data: null, block: null, week: null, openDays: {} };
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
     $("loginError").classList.toggle("hidden", !message);
     show("loginView");
   }
 
+  // ---------- blocks & weeks ----------
+  // Older sheets send program.weeks with no blocks; treat that as one unnamed block.
+  function getBlocks(data) {
+    var p = (data && data.program) || {};
+    if (p.blocks) return p.blocks;
+    return p.weeks ? [{ name: "", weeks: p.weeks }] : [];
+  }
+  function currentBlock() {
+    var blocks = getBlocks(state.data);
+    return blocks.filter(function (b) { return b.name === state.block; })[0] || blocks[0] || null;
+  }
+  function currentWeeks() { var b = currentBlock(); return b ? b.weeks : []; }
+  function pick(list, current, saved) {
+    var names = list.map(function (x) { return x.name; });
+    if (names.indexOf(current) !== -1) return current;
+    if (names.indexOf(saved) !== -1) return saved;
+    return list.length ? list[0].name : null;
+  }
+  // ---------- dates ----------
+  function parseDay(s) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  function todayDay() { var n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); }
+  function addDays(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+  function shortDate(d) { return d.toLocaleDateString("en-AU", { day: "numeric", month: "short" }); }
+  function weekStart(block, i) { var s = parseDay(block.start); return s ? addDays(s, 7 * i) : null; }
+
+  // The block and week that today falls in, using block start dates. Null if no dates are set.
+  function currentByDate(blocks) {
+    var today = todayDay(), best = null;
+    blocks.forEach(function (b) {
+      var s = parseDay(b.start);
+      if (s && s <= today && (!best || s >= parseDay(best.start))) best = b;
+    });
+    if (!best) {
+      var upcoming = blocks.filter(function (b) { return parseDay(b.start); })
+        .sort(function (a, b) { return parseDay(a.start) - parseDay(b.start); })[0];
+      return upcoming && upcoming.weeks.length ? { block: upcoming.name, week: upcoming.weeks[0].name } : null;
+    }
+    if (!best.weeks.length) return null;
+    var i = Math.floor((today - parseDay(best.start)) / 864e5 / 7);
+    i = Math.max(0, Math.min(i, best.weeks.length - 1));
+    return { block: best.name, week: best.weeks[i].name };
+  }
+  function isThisWeek(block, i) {
+    var s = weekStart(block, i); if (!s) return false;
+    var t = todayDay(); return t >= s && t < addDays(s, 7);
+  }
+
+  function scope(week, day) { return (state.block ? state.block + "|" : "") + week + "|" + day; }
+
   // ---------- ticks ----------
-  function tickKey(week, day, idx) { return [state.code, week, day, idx].join("|"); }
+  function tickKey(week, day, idx) { return state.code + "|" + scope(week, day) + "|" + idx; }
   function getTicks() { return load(KEY_TICKS, {}); }
   function setTick(key, on) {
     var t = getTicks();
@@ -141,7 +199,8 @@
   function render() {
     var data = state.data || {};
     var client = data.client || {};
-    var weeks = (data.program && data.program.weeks) || [];
+    var blocks = getBlocks(data);
+    var weeks = currentWeeks();
 
     $("helloName").textContent = client.name ? "Hi " + String(client.name).split(" ")[0] : "Your program";
     $("updatedAt").textContent = data.updated
@@ -172,11 +231,22 @@
 
     $("emptyState").classList.toggle("hidden", weeks.length > 0);
 
+    var bTabs = $("blockTabs");
+    bTabs.classList.toggle("hidden", blocks.length < 2);
+    bTabs.innerHTML = '<span class="tabs-label">Block</span>' + blocks.map(function (b) {
+      return '<button class="week-tab" role="tab" aria-selected="' + (b.name === state.block) + '" data-block="' +
+        esc(b.name) + '">' + esc(b.name || "Program") +
+        (parseDay(b.start) ? '<small>from ' + esc(shortDate(parseDay(b.start))) + "</small>" : "") + "</button>";
+    }).join("");
+
     var tabs = $("weekTabs");
     tabs.classList.toggle("hidden", weeks.length < 2);
-    tabs.innerHTML = weeks.map(function (w) {
-      return '<button class="week-tab" role="tab" aria-selected="' + (w.name === state.week) + '" data-week="' +
-        esc(w.name) + '">' + esc(w.name) + "</button>";
+    tabs.innerHTML = '<span class="tabs-label">Week</span>' + weeks.map(function (w, wi) {
+      var blk = currentBlock() || {};
+      var ws = weekStart(blk, wi);
+      var now = isThisWeek(blk, wi);
+      return '<button class="week-tab' + (now ? " this-week" : "") + '" role="tab" aria-selected="' + (w.name === state.week) + '" data-week="' +
+        esc(w.name) + '">' + esc(w.name) + (ws ? "<small>" + (now ? "This week" : esc(shortDate(ws))) + "</small>" : "") + "</button>";
     }).join("");
 
     var week = weeks.filter(function (w) { return w.name === state.week; })[0];
@@ -190,7 +260,7 @@
         return exerciseHtml(ex, k, isDone);
       }).join("");
       var total = day.exercises.length;
-      var dayKey = week.name + "|" + day.name;
+      var dayKey = scope(week.name, day.name);
       var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === firstUnfinished(week, ticks));
       return '<article class="day' + (open ? " open" : "") + '" data-day="' + esc(dayKey) + '">' +
         '<button class="day-head" aria-expanded="' + open + '">' +
@@ -244,10 +314,25 @@
     signIn($("codeInput").value);
   });
 
+  $("blockTabs").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-block]");
+    if (!b) return;
+    if (b.getAttribute("data-block") === state.block) return;
+    state.block = b.getAttribute("data-block");
+    state.manual = true;
+    save(KEY_BLOCK, state.block);
+    var blk = currentBlock();
+    var thisWeek = blk ? blk.weeks.filter(function (w, i) { return isThisWeek(blk, i); })[0] : null;
+    state.week = thisWeek ? thisWeek.name : pick(currentWeeks(), null, null);
+    save(KEY_WEEK, state.week);
+    render();
+  });
+
   $("weekTabs").addEventListener("click", function (e) {
     var b = e.target.closest("[data-week]");
     if (!b) return;
     state.week = b.getAttribute("data-week");
+    state.manual = true;
     save(KEY_WEEK, state.week);
     render();
   });
@@ -351,6 +436,10 @@
   });
 
   // ---------- demo program ----------
+  function isoOffset(days) {
+    var d = addDays(todayDay(), days);
+    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+  }
   function demoData() {
     function ex(label, name, sets, reps, load, rest, notes, video) {
       return { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
@@ -359,28 +448,41 @@
       client: { name: "Demo Athlete", type: "Weekly", sessions: "Mondays at 7:15 pm", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {
         name: "Demo",
-        weeks: [
+        blocks: [
+          { name: "Block 1 · Foundation", start: isoOffset(-9), weeks: [
           { name: "Week 1", days: [
-            { name: "Day 1 · Lower strength", exercises: [
+            { name: "Session 1 · Lower strength", exercises: [
               ex("A1", "Back squat", "4", "6", "75%", "2-3 min", "Brace hard, sit between the hips."),
               ex("B1", "Romanian deadlift", "3", "8", "RPE 7", "90 s"),
               ex("B2", "Walking lunge", "3", "10 each", "2×16 kg", "90 s"),
               ex("C1", "Copenhagen plank", "3", "20 s each", "", "45 s")
             ]},
-            { name: "Day 2 · Upper strength", exercises: [
+            { name: "Session 2 · Upper strength", exercises: [
               ex("A1", "Bench press", "4", "6", "75%", "2-3 min"),
               ex("A2", "Chin-up", "4", "6-8", "Bodyweight", "2 min"),
               ex("B1", "Half-kneeling landmine press", "3", "8 each", "", "60 s"),
               ex("B2", "Chest-supported row", "3", "10", "", "60 s")
             ]},
-            { name: "Day 3 · Conditioning", exercises: [
+            { name: "Session 3 · Conditioning", exercises: [
               ex("A1", "Tempo runs", "8", "100 m", "70% effort", "Walk back", "Stay smooth and relaxed.")
             ]}
           ]},
           { name: "Week 2", days: [
-            { name: "Day 1 · Lower strength", exercises: [
+            { name: "Session 1 · Lower strength", exercises: [
               ex("A1", "Back squat", "4", "5", "80%", "2-3 min"),
               ex("B1", "Romanian deadlift", "3", "8", "RPE 8", "90 s")
+            ]}
+          ]}
+          ]},
+          { name: "Block 2 · Strength", start: isoOffset(5), weeks: [
+            { name: "Week 1", days: [
+              { name: "Session 1 · Lower", exercises: [
+                ex("A1", "Trap bar deadlift", "5", "3", "85%", "3 min"),
+                ex("B1", "Bulgarian split squat", "3", "6 each", "2×20 kg", "90 s")
+              ]},
+              { name: "Session 2 · Upper", exercises: [
+                ex("A1", "Weighted chin-up", "5", "3", "+10 kg", "3 min")
+              ]}
             ]}
           ]}
         ]

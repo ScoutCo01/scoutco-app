@@ -165,3 +165,8 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 .sessions strong { display: block; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-strong); margin-bottom: 2px; white-space: normal; }
 .type-badge { display: inline-block; background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 700; margin: 4px 0 2px; white-space: normal; }
 .sessions-text { margin-top: 4px; }
+.tabs-label { flex: 0 0 auto; align-self: center; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); min-width: 48px; }
+#blockTabs { padding-bottom: 0; }
+.week-tab small { display: block; font-size: 11px; font-weight: 500; opacity: .8; margin-top: 1px; }
+.week-tab { line-height: 1.2; }
+.week-tab.this-week:not([aria-selected="true"]) { border-color: var(--accent); }

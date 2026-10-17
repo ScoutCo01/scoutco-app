@@ -7,14 +7,17 @@
  *
  * Sheet tabs it uses:
  *   Clients:  Code | Name | Program | Active | Message | (Link) | Type | Sessions
- *   Programs: Program | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
+ *   Blocks:   Program | Block | Start date   (optional: lets the app open on the current week)
+ *   Programs: Program | Block | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
  */
 
 var CLIENTS_TAB = "Clients";
 var PROGRAMS_TAB = "Programs";
+var BLOCKS_TAB = "Blocks";
+var BLOCK_HEADERS = ["Program", "Block", "Start date"];
 
 var CLIENT_HEADERS = ["Code", "Name", "Program", "Active", "Message"];
-var PROGRAM_HEADERS = ["Program", "Week", "Day", "Order", "Exercise", "Sets", "Reps", "Load", "Tempo", "Rest", "Notes", "Video"];
+var PROGRAM_HEADERS = ["Program", "Block", "Week", "Day", "Order", "Exercise", "Sets", "Reps", "Load", "Tempo", "Rest", "Notes", "Video"];
 
 /** Called by the app: ?code=SC-XXXXXX */
 function doGet(e) {
@@ -38,9 +41,45 @@ function doGet(e) {
 
   return json_({
     client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
-    program: { name: programName, weeks: group_(rows) },
+    program: { name: programName, blocks: addStartDates_(ss, programName, groupBlocks_(rows)) },
     updated: new Date().toISOString()
   });
+}
+
+/** Adds each block's start date (yyyy-mm-dd) from the Blocks tab, if there is one. */
+function addStartDates_(ss, programName, blocks) {
+  var sheet = ss.getSheetByName(BLOCKS_TAB);
+  if (!sheet) return blocks;
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return blocks;
+  var h = values[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cP = h.indexOf("program"), cB = h.indexOf("block"), cS = h.indexOf("start date");
+  if (cP < 0 || cB < 0 || cS < 0) return blocks;
+  var tz = ss.getSpreadsheetTimeZone();
+  var starts = {};
+  values.slice(1).forEach(function (r) {
+    if (String(r[cP]).trim().toLowerCase() !== programName.toLowerCase()) return;
+    var d = r[cS];
+    if (Object.prototype.toString.call(d) === "[object Date]" && !isNaN(d)) {
+      starts[String(r[cB]).trim().toLowerCase()] = Utilities.formatDate(d, tz, "yyyy-MM-dd");
+    }
+  });
+  blocks.forEach(function (b) {
+    var s = starts[String(b.name).toLowerCase()];
+    if (s) b.start = s;
+  });
+  return blocks;
+}
+
+/** Groups rows into blocks (Block column; blank = one block), each holding weeks. */
+function groupBlocks_(rows) {
+  var blocks = [], index = {};
+  rows.forEach(function (r) {
+    var b = String(r.Block || "").trim();
+    if (!(b in index)) { index[b] = blocks.length; blocks.push({ name: b, rows: [] }); }
+    blocks[index[b]].rows.push(r);
+  });
+  return blocks.map(function (b) { return { name: b.name, weeks: group_(b.rows) }; });
 }
 
 /** Groups sheet rows into weeks → days → exercises, keeping the sheet's order. */
@@ -107,7 +146,7 @@ function isOff_(v) { var s = String(v || "").trim().toLowerCase(); return s === 
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu("ScoutCo")
-    .addItem("Set up tabs (first time only)", "setupSheets")
+    .addItem("Set up tabs", "setupSheets")
     .addItem("Add a new client", "addClient")
     .addToUi();
 }
@@ -128,20 +167,28 @@ function setupSheets() {
   if (programs.getLastRow() === 0) {
     programs.appendRow(PROGRAM_HEADERS);
     [
-      ["Example Client", "Week 1", "Day 1 · Lower", "A1", "Back squat", "4", "6", "75%", "3-1-1", "2-3 min", "Brace hard.", ""],
-      ["Example Client", "Week 1", "Day 1 · Lower", "B1", "Romanian deadlift", "3", "8", "RPE 7", "", "90 s", "", ""],
-      ["Example Client", "Week 1", "Day 2 · Upper", "A1", "Bench press", "4", "6", "75%", "", "2-3 min", "", ""],
-      ["Example Client", "Week 1", "Day 2 · Upper", "A2", "Chin-up", "4", "6-8", "Bodyweight", "", "2 min", "", ""]
+      ["Example Client", "Block 1", "Week 1", "Day 1 · Lower", "A1", "Back squat", "4", "6", "75%", "3-1-1", "2-3 min", "Brace hard.", ""],
+      ["Example Client", "Block 1", "Week 1", "Day 1 · Lower", "B1", "Romanian deadlift", "3", "8", "RPE 7", "", "90 s", "", ""],
+      ["Example Client", "Block 1", "Week 1", "Day 2 · Upper", "A1", "Bench press", "4", "6", "75%", "", "2-3 min", "", ""],
+      ["Example Client", "Block 1", "Week 1", "Day 2 · Upper", "A2", "Chin-up", "4", "6-8", "Bodyweight", "", "2 min", "", ""]
     ].forEach(function (r) { programs.appendRow(r); });
     styleHeader_(programs, PROGRAM_HEADERS.length);
-    programs.setColumnWidth(11, 300);
+    programs.setColumnWidth(12, 300);
+  }
+
+  var blocksTab = ss.getSheetByName(BLOCKS_TAB) || ss.insertSheet(BLOCKS_TAB);
+  if (blocksTab.getLastRow() === 0) {
+    blocksTab.appendRow(BLOCK_HEADERS);
+    blocksTab.appendRow(["Example Client", "Block 1", new Date()]);
+    styleHeader_(blocksTab, BLOCK_HEADERS.length);
+    blocksTab.getRange("C2:C").setNumberFormat("dd/mm/yyyy");
   }
 
   var first = ss.getSheets()[0];
   if (first.getName() !== CLIENTS_TAB && first.getName() !== PROGRAMS_TAB && first.getLastRow() === 0) {
     ss.deleteSheet(first);
   }
-  SpreadsheetApp.getUi().alert("Done! Your Clients and Programs tabs are ready.");
+  SpreadsheetApp.getUi().alert("Done! Your Clients, Programs and Blocks tabs are ready.");
 }
 
 /** Asks for a name, then adds a client row with a fresh private code. */
