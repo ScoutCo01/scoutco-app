@@ -1,6 +1,6 @@
 // Keeps the app working offline. Bump VERSION whenever app files change
 // so phones pick up the new version.
-var VERSION = "scoutco-v2";
+var VERSION = "scoutco-v3";
 var FILES = [
   "./",
   "index.html",
