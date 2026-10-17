@@ -157,7 +157,12 @@ function addClient() {
   if (!sheet) { ui.alert("Run ScoutCo → Set up tabs first."); return; }
   var existing = readTab_(ss, CLIENTS_TAB).map(function (c) { return normalise_(c.Code); });
   var code = newCode_(existing);
-  sheet.appendRow([code, name, name, "Yes", ""]);
+  // Put the client in the first empty row (not appendRow, which a link formula pushes to the bottom).
+  var last = Math.max(sheet.getLastRow(), 2);
+  var colA = sheet.getRange(2, 1, last - 1, 1).getDisplayValues();
+  var row = 2;
+  while (row - 2 < colA.length && String(colA[row - 2][0]).trim() !== "") row++;
+  sheet.getRange(row, 1, 1, 5).setValues([[code, name, name, "Yes", ""]]);
   ui.alert(name + "'s code is:\n\n" + code + "\n\nAdd their exercises on the Programs tab with \"" + name + "\" in the Program column.");
 }
 
