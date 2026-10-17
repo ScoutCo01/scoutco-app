@@ -12,7 +12,7 @@ A free, ScoutCo-branded app your clients save to their phone's home screen. Each
 
 1. Go to [sheets.new](https://sheets.new) to create a new Google Sheet, and name it **ScoutCo Programs**.
 2. In the sheet, open **Extensions → Apps Script**.
-3. Delete everything in the code box. Then paste in the full contents of [`google-apps-script/Code.gs`](google-apps-script/Code.gs) and click the 💾 **Save** icon.
+3. Open the [plain-text script](https://raw.githubusercontent.com/ScoutCo01/scoutco-app/main/google-apps-script/Code.gs), select all (Ctrl+A or Cmd+A) and copy it. Delete everything in the Apps Script code box, paste, and click the 💾 **Save** icon.
 4. Go back to your sheet and refresh the page. A **ScoutCo** menu appears at the top. Choose **ScoutCo → Set up tabs (first time only)**.
    - Google will ask you to authorise the script. Click **Continue**, pick your account, then **Advanced → Go to (unsafe)** → **Allow**. The "unsafe" warning appears because you wrote the script yourself and Google hasn't reviewed it. It only reads and writes this one sheet.
 5. Back in **Apps Script**, click **Deploy → New deployment**.
