@@ -36,6 +36,8 @@ To stop a client's access, change **Active** to `No`.
 
 **Message** shows as a "From your coach" note at the top of that client's app.
 
+**Type** (e.g. Online only, Weekly, Fortnightly) and **Sessions** (e.g. Mondays at 7:15 pm) show in a "Your sessions" box at the top of the app. Add these two column headings to the Clients tab if they're not there, in any empty columns.
+
 ## Writing a program (Programs tab)
 
 | Column | What to put | Example |

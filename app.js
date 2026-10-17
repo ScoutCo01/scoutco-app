@@ -148,6 +148,20 @@
       ? "Updated " + new Date(data.updated).toLocaleString("en-AU", { weekday: "short", hour: "numeric", minute: "2-digit" })
       : "";
 
+    var sessions = $("sessionsCard");
+    var sType = String(client.type || "").trim();
+    var sText = String(client.sessions || "").trim();
+    if (sType || sText) {
+      sessions.innerHTML =
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>' +
+        "<div><strong>Your sessions</strong>" +
+        (sType ? '<span class="type-badge">' + esc(sType) + "</span>" : "") +
+        (sText ? '<div class="sessions-text">' + esc(sText) + "</div>" : "") + "</div>";
+      sessions.classList.remove("hidden");
+    } else {
+      sessions.classList.add("hidden");
+    }
+
     var note = $("coachNote");
     if (client.message) {
       note.innerHTML = "<strong>From your coach</strong>" + esc(client.message);
@@ -342,7 +356,7 @@
       return { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
     }
     return {
-      client: { name: "Demo Athlete", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
+      client: { name: "Demo Athlete", type: "Weekly", sessions: "Mondays at 7:15 pm", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {
         name: "Demo",
         weeks: [

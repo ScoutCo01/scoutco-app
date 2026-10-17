@@ -6,7 +6,7 @@
  * their personal code.
  *
  * Sheet tabs it uses:
- *   Clients:  Code | Name | Program | Active | Message
+ *   Clients:  Code | Name | Program | Active | Message | (Link) | Type | Sessions
  *   Programs: Program | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
  */
 
@@ -37,7 +37,7 @@ function doGet(e) {
   });
 
   return json_({
-    client: { name: String(client.Name || ""), message: String(client.Message || "") },
+    client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
     program: { name: programName, weeks: group_(rows) },
     updated: new Date().toISOString()
   });
