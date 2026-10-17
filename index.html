@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ScoutCo Training</title>
+  <meta name="description" content="Your ScoutCo strength & conditioning program.">
+  <meta name="theme-color" content="#121016">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ScoutCo">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/logo.svg" alt="" class="brand-mark" width="36" height="36">
+      <div>
+        <div class="brand-name">SCOUTCO</div>
+        <div class="brand-tag" id="brandTag">Strength &amp; Conditioning</div>
+      </div>
+    </div>
+    <button class="icon-btn hidden" id="menuBtn" aria-label="Menu" aria-expanded="false">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+    </button>
+    <div class="menu hidden" id="menu">
+      <button id="refreshBtn">Refresh program</button>
+      <button id="installMenuBtn">Add to home screen</button>
+      <button id="signOutBtn">Sign out</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <!-- Sign-in screen -->
+    <section id="loginView" class="view hidden">
+      <div class="login-card">
+        <img src="icons/logo.svg" alt="ScoutCo" class="login-logo" width="88" height="88">
+        <h1>Your training program</h1>
+        <p class="muted">Enter the personal code your coach gave you.</p>
+        <form id="loginForm" autocomplete="off">
+          <label for="codeInput" class="sr-only">Your code</label>
+          <input id="codeInput" name="code" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="e.g. SC-7Q4K9X" required>
+          <button type="submit" class="btn primary" id="loginBtn">Open my program</button>
+        </form>
+        <p class="error hidden" id="loginError" role="alert"></p>
+      </div>
+    </section>
+
+    <!-- Program screen -->
+    <section id="programView" class="view hidden">
+      <div class="hello">
+        <h1 id="helloName"></h1>
+        <p class="muted small" id="updatedAt"></p>
+      </div>
+      <div class="notice hidden" id="offlineNotice">You're offline, so this is your last saved copy.</div>
+      <div class="coach-note hidden" id="coachNote"></div>
+      <nav class="weeks" id="weekTabs" aria-label="Weeks"></nav>
+      <div id="days"></div>
+      <p class="empty hidden" id="emptyState">Your coach hasn't added a program yet. Check back soon.</p>
+    </section>
+
+    <section id="loadingView" class="view">
+      <div class="spinner" aria-label="Loading"></div>
+    </section>
+  </main>
+
+  <div class="install-banner hidden" id="installBanner" role="dialog" aria-live="polite">
+    <div id="installText"></div>
+    <div class="install-actions">
+      <button class="btn small ghost" id="installDismiss">Not now</button>
+      <button class="btn small primary hidden" id="installAccept">Install</button>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
