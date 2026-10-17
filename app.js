@@ -376,7 +376,6 @@
   }
 
   // ---------- start ----------
-  if (CONFIG.tagline) $("brandTag").textContent = CONFIG.tagline;
 
   // Personal link support: index.html?code=SC-XXXXXX signs the client straight in.
   var params = new URLSearchParams(location.search);

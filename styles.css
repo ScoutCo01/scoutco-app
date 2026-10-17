@@ -41,8 +41,8 @@ a { color: var(--accent-strong); }
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
 }
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand-mark { border-radius: 9px; }
+.brand { display: flex; align-items: center; min-height: 36px; }
+.brand-logo { height: 23px; width: auto; display: block; }
 .brand-name { font-weight: 800; letter-spacing: 0.14em; font-size: 15px; }
 .brand-tag { font-size: 11px; color: var(--muted); letter-spacing: 0.04em; }
 .icon-btn { background: none; border: 0; padding: 8px; border-radius: 10px; }
@@ -71,7 +71,7 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 
 /* Sign in */
 .login-card { text-align: center; padding: 48px 4px 24px; }
-.login-logo { border-radius: 22px; margin-bottom: 18px; }
+.login-logo { width: min(320px, 86%); height: auto; margin: 8px auto 32px; display: block; }
 .login-card h1 { font-size: 26px; margin: 0 0 6px; }
 #loginForm { display: grid; gap: 12px; margin-top: 24px; }
 #codeInput {

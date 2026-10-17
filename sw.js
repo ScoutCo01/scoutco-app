@@ -1,6 +1,6 @@
 // Keeps the app working offline. Bump VERSION whenever app files change
 // so phones pick up the new version.
-var VERSION = "scoutco-v1";
+var VERSION = "scoutco-v2";
 var FILES = [
   "./",
   "index.html",
@@ -8,8 +8,9 @@ var FILES = [
   "app.js",
   "config.js",
   "manifest.webmanifest",
-  "icons/logo.svg",
-  "icons/icon.svg",
+  "icons/logo-wordmark-white.png",
+  "icons/logo-full-white.png",
+  "icons/favicon.png",
   "icons/icon-192.png",
   "icons/icon-512.png",
   "icons/apple-touch-icon.png"

@@ -4,6 +4,5 @@
 window.SCOUTCO_CONFIG = {
   apiUrl: "",
   businessName: "ScoutCo",
-  tagline: "Strength & Conditioning",
   websiteUrl: "https://www.scoutco.com.au/"
 };

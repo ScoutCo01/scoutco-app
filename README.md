@@ -66,5 +66,5 @@ That link signs them straight in. Then they add the app to their home screen:
 
 ## Changing the look
 
-- **Logo:** replace the files in `icons/`. Or send Claude your logo and Claude will update them.
+- **Logo:** the files in `icons/` were made from the ScoutCo logo. Send Claude a new one to update them.
 - **Colours:** see the top of `styles.css`.
