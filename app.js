@@ -6,11 +6,13 @@
   var KEY_CACHE = "scoutco.program";
   var KEY_WEEK = "scoutco.week";
   var KEY_BLOCK = "scoutco.block";
+  var KEY_OUTBOX = "scoutco.outbox";
+  var KEY_COMMENTS = "scoutco.comments";
   var KEY_TICKS = "scoutco.ticks";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { code: null, data: null, block: null, week: null, openDays: {} };
+  var state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, info: {} };
 
   // ---------- storage helpers (never let storage errors break the app) ----------
   function load(key, fallback) {
@@ -126,12 +128,55 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK);
-    state = { code: null, data: null, block: null, week: null, openDays: {} };
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX);
+    state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, info: {} };
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
     $("loginError").classList.toggle("hidden", !message);
     show("loginView");
+  }
+
+  // ---------- sending ticks & comments to the coach's sheet ----------
+  // Events wait in an outbox until the sheet confirms it saved them, so nothing is lost offline.
+  var flushing = false;
+  function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function canSend() { return CONFIG.apiUrl && state.code && state.code !== "DEMO"; }
+  function queue(ev) {
+    if (!canSend()) return null;
+    ev.id = newId();
+    var box = load(KEY_OUTBOX, []).filter(function (x) {
+      return !(ev.type === "tick" && x.type === "tick" && x.key === ev.key); // only the latest tick state matters
+    });
+    box.push(ev);
+    save(KEY_OUTBOX, box);
+    flush();
+    return ev.id;
+  }
+  function isPending(id) { return load(KEY_OUTBOX, []).some(function (x) { return x.id === id; }); }
+  function flush() {
+    if (flushing || !canSend()) return;
+    var box = load(KEY_OUTBOX, []);
+    if (!box.length) return;
+    flushing = true;
+    fetch(CONFIG.apiUrl, { method: "POST", body: JSON.stringify({ code: state.code, events: box }) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (res && res.ok) {
+          var saved = res.saved || [];
+          save(KEY_OUTBOX, load(KEY_OUTBOX, []).filter(function (x) { return saved.indexOf(x.id) === -1; }));
+          if (state.data) render();
+        }
+      })
+      .catch(function () { /* try again later */ })
+      .then(function () { flushing = false; });
+  }
+  window.addEventListener("online", flush);
+
+  function commentsFor(dayKey) { return (load(KEY_COMMENTS, {})[state.code + "|" + dayKey]) || []; }
+  function addComment(dayKey, entry) {
+    var all = load(KEY_COMMENTS, {}), k = state.code + "|" + dayKey;
+    (all[k] = all[k] || []).push(entry);
+    save(KEY_COMMENTS, all);
   }
 
   // ---------- blocks & weeks ----------
@@ -197,6 +242,18 @@
 
   // ---------- rendering ----------
   function render() {
+    // Keep the cursor in a comment box if the screen redraws while someone is typing.
+    var active = document.activeElement;
+    var typing = active && active.getAttribute && active.getAttribute("data-comment");
+    var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
+    renderAll();
+    if (typing) {
+      var again = document.querySelector('[data-comment="' + CSS.escape(typing) + '"]');
+      if (again) { again.focus(); try { again.setSelectionRange(caret[0], caret[1]); } catch (e) { /* ignore */ } }
+    }
+  }
+
+  function renderAll() {
     var data = state.data || {};
     var client = data.client || {};
     var blocks = getBlocks(data);
@@ -253,14 +310,18 @@
     var ticks = getTicks();
     $("days").innerHTML = !week ? "" : week.days.map(function (day, di) {
       var done = 0;
+      var dayKey = scope(week.name, day.name);
+      var where = { block: state.block || "", week: week.name, session: day.name };
+      state.info[dayKey] = where;
       var items = day.exercises.map(function (ex, i) {
         var k = tickKey(week.name, day.name, i);
+        state.info[k] = { block: where.block, week: where.week, session: where.session,
+          exercise: (ex.label ? ex.label + " " : "") + ex.name, key: k.slice(state.code.length + 1) };
         var isDone = !!ticks[k];
         if (isDone) done++;
         return exerciseHtml(ex, k, isDone);
       }).join("");
       var total = day.exercises.length;
-      var dayKey = scope(week.name, day.name);
       var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === firstUnfinished(week, ticks));
       return '<article class="day' + (open ? " open" : "") + '" data-day="' + esc(dayKey) + '">' +
         '<button class="day-head" aria-expanded="' + open + '">' +
@@ -274,9 +335,25 @@
         "</button>" +
         '<div class="day-body">' + items +
           (done ? '<div class="day-foot"><button class="btn small ghost" data-clear="' + esc(dayKey) + '">Clear ticks</button></div>' : "") +
+          commentHtml(dayKey) +
         "</div>" +
       "</article>";
     }).join("");
+  }
+
+  function commentHtml(dayKey) {
+    var sent = commentsFor(dayKey).map(function (c) {
+      var status = isPending(c.id) ? "Sending…" : "Sent ✓";
+      return '<div class="sent-comment"><div>' + esc(c.text) + '</div><div class="small muted">' +
+        esc(new Date(c.at).toLocaleString("en-AU", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })) +
+        " · " + status + "</div></div>";
+    }).join("");
+    return '<div class="day-comment">' +
+      '<label class="comment-label" for="c-' + esc(dayKey) + '">Comments for your coach</label>' + sent +
+      '<textarea id="c-' + esc(dayKey) + '" data-comment="' + esc(dayKey) + '" rows="3" maxlength="2000" ' +
+        'placeholder="How did it feel? Weights used, PBs, pain or questions…">' + esc(state.drafts[dayKey] || "") + "</textarea>" +
+      '<div class="comment-actions"><button class="btn small primary" data-send="' + esc(dayKey) + '">Send</button></div>' +
+    "</div>";
   }
 
   function firstUnfinished(week, ticks) {
@@ -341,7 +418,9 @@
     var tick = e.target.closest("[data-tick]");
     if (tick) {
       var k = tick.getAttribute("data-tick");
-      setTick(k, !getTicks()[k]);
+      var on = !getTicks()[k];
+      setTick(k, on);
+      sendTick(k, on);
       keepOpen(tick);
       render();
       return;
@@ -350,9 +429,23 @@
     if (clear) {
       var prefix = state.code + "|" + clear.getAttribute("data-clear") + "|";
       var t = getTicks();
-      Object.keys(t).forEach(function (key) { if (key.indexOf(prefix) === 0) delete t[key]; });
+      Object.keys(t).forEach(function (key) { if (key.indexOf(prefix) === 0) { delete t[key]; sendTick(key, false); } });
       save(KEY_TICKS, t);
       keepOpen(clear);
+      render();
+      return;
+    }
+    var send = e.target.closest("[data-send]");
+    if (send) {
+      var dk = send.getAttribute("data-send");
+      var box = document.querySelector('[data-comment="' + CSS.escape(dk) + '"]');
+      var text = box ? box.value.trim() : "";
+      if (!text) { if (box) box.focus(); return; }
+      var w = state.info[dk] || {};
+      var id = queue({ type: "comment", block: w.block, week: w.week, session: w.session, text: text }) || newId();
+      addComment(dk, { id: id, text: text, at: Date.now() });
+      state.drafts[dk] = "";
+      keepOpen(send);
       render();
       return;
     }
@@ -364,6 +457,16 @@
       render();
     }
   });
+  $("days").addEventListener("input", function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute("data-comment");
+    if (k) state.drafts[k] = e.target.value;
+  });
+
+  function sendTick(k, on) {
+    var i = state.info[k];
+    if (i) queue({ type: "tick", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.exercise, done: on });
+  }
+
   function keepOpen(el) {
     var art = el.closest(".day");
     if (art) state.openDays[art.getAttribute("data-day")] = true;
@@ -384,7 +487,7 @@
 
   // Refresh when the app comes back to the foreground, so program edits show up.
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && state.code && state.data) refresh(true);
+    if (document.visibilityState === "visible" && state.code && state.data) { refresh(true); flush(); }
   });
 
   // ---------- install to home screen ----------
@@ -513,6 +616,8 @@
   } else {
     show("loginView");
   }
+
+  flush();
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", function () {

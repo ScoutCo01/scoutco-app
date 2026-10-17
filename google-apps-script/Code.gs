@@ -8,12 +8,18 @@
  * Sheet tabs it uses:
  *   Clients:  Code | Name | Program | Active | Message | (Link) | Type | Sessions
  *   Blocks:   Program | Block | Start date   (optional: lets the app open on the current week)
+ *   Progress: filled in by the app when clients tick exercises
+ *   Feedback: filled in by the app when clients send session comments (you also get an email)
  *   Programs: Program | Block | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
  */
 
 var CLIENTS_TAB = "Clients";
 var PROGRAMS_TAB = "Programs";
 var BLOCKS_TAB = "Blocks";
+var PROGRESS_TAB = "Progress";
+var FEEDBACK_TAB = "Feedback";
+var PROGRESS_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exercise", "Done", "Key"];
+var FEEDBACK_HEADERS = ["Received", "Client", "Block", "Week", "Session", "Comment", "ID"];
 var BLOCK_HEADERS = ["Program", "Block", "Start date"];
 
 var CLIENT_HEADERS = ["Code", "Name", "Program", "Active", "Message"];
@@ -45,6 +51,91 @@ function doGet(e) {
     updated: new Date().toISOString()
   });
 }
+
+/** Called by the app to save ticks and session comments: POST {code, events: [...]} */
+function doPost(e) {
+  var body;
+  try { body = JSON.parse(e.postData.contents); } catch (err) { return json_({ error: "Bad request" }); }
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var client = findClient_(ss, normalise_(body.code));
+  if (!client) return json_({ error: "That code wasn't recognised." });
+
+  var events = (body.events || []).slice(0, 200);
+  var done = [], comments = [];
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
+    var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
+    var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+    var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+    var name = String(client.Name || client.Code);
+    events.forEach(function (ev) {
+      if (!ev || !ev.id) return;
+      if (ev.type === "tick") {
+        var key = normalise_(client.Code) + "|" + clip_(ev.key, 300);
+        var row = [new Date(), cell_(name), cell_(ev.block), cell_(ev.week), cell_(ev.session), cell_(ev.exercise), ev.done ? "✓" : "", key];
+        var at = progKeys.indexOf(key);
+        if (at > 0) {
+          progress.getRange(at + 1, 1, 1, row.length).setValues([row]);
+        } else {
+          progress.appendRow(row);
+          progKeys.push(key);
+        }
+      } else if (ev.type === "comment") {
+        var text = clip_(ev.text, 2000).trim();
+        if (text && fbIds.indexOf(String(ev.id)) === -1) {
+          feedback.appendRow([new Date(), cell_(name), cell_(ev.block), cell_(ev.week), cell_(ev.session), cell_(text), String(ev.id)]);
+          fbIds.push(String(ev.id));
+          comments.push(ev);
+        }
+      }
+      done.push(ev.id);
+    });
+  } finally {
+    lock.releaseLock();
+  }
+
+  if (comments.length) notify_(ss, client, comments);
+  return json_({ ok: true, saved: done });
+}
+
+/** Emails you when a client sends a comment. */
+function notify_(ss, client, comments) {
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (!to) return;
+    var lines = comments.map(function (c) {
+      return [c.block, c.week, c.session].filter(String).join(" · ") + "\n" + clip_(c.text, 2000);
+    });
+    MailApp.sendEmail(to, "ScoutCo: comment from " + (client.Name || "a client"),
+      lines.join("\n\n") + "\n\nAll comments are on the Feedback tab:\n" + ss.getUrl());
+  } catch (err) { /* email is a bonus; the comment is already saved */ }
+}
+
+function findClient_(ss, code) {
+  if (!code) return null;
+  var clients = readTab_(ss, CLIENTS_TAB);
+  for (var i = 0; i < clients.length; i++) {
+    if (normalise_(clients[i].Code) === code) return isOff_(clients[i].Active) ? null : clients[i];
+  }
+  return null;
+}
+
+/** Gets a tab, creating it with headings if it doesn't exist yet. */
+function tab_(ss, name, headers) {
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(headers);
+    styleHeader_(sheet, headers.length);
+  }
+  return sheet;
+}
+
+function clip_(s, n) { return String(s == null ? "" : s).slice(0, n); }
+/** Stops client text being treated as a formula. */
+function cell_(s) { s = clip_(s, 2000); return /^[=+\-@]/.test(s) ? "'" + s : s; }
 
 /** Adds each block's start date (yyyy-mm-dd) from the Blocks tab, if there is one. */
 function addStartDates_(ss, programName, blocks) {
@@ -184,11 +275,14 @@ function setupSheets() {
     blocksTab.getRange("C2:C").setNumberFormat("dd/mm/yyyy");
   }
 
+  tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS).setColumnWidth(6, 220);
+  tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS).setColumnWidth(6, 420);
+
   var first = ss.getSheets()[0];
   if (first.getName() !== CLIENTS_TAB && first.getName() !== PROGRAMS_TAB && first.getLastRow() === 0) {
     ss.deleteSheet(first);
   }
-  SpreadsheetApp.getUi().alert("Done! Your Clients, Programs and Blocks tabs are ready.");
+  SpreadsheetApp.getUi().alert("Done! Your tabs are ready.");
 }
 
 /** Asks for a name, then adds a client row with a fresh private code. */

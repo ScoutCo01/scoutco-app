@@ -60,6 +60,13 @@ When a client opens the app, it jumps to the current block and week. They can st
 
 Changes are live as soon as you type them. Clients see them the next time they open the app.
 
+## Seeing what clients do (Progress and Feedback tabs)
+
+- **Progress:** each time a client ticks or unticks an exercise, a row is updated with ✓ and the time.
+- **Feedback:** each session has a "Comments for your coach" box. Comments land here, and you get an email for each one.
+
+Both tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
+
 ## Sending the app to a client
 
 **Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:
