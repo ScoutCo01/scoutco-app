@@ -10,12 +10,14 @@
  *   Blocks:   Program | Block | Start date   (optional: lets the app open on the current week)
  *   Progress: filled in by the app when clients tick exercises
  *   Feedback: filled in by the app when clients send session comments (you also get an email)
+ *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *   Programs: Program | Block | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
  */
 
 var CLIENTS_TAB = "Clients";
 var PROGRAMS_TAB = "Programs";
 var BLOCKS_TAB = "Blocks";
+var WEEKS_LEFT_TAB = "Weeks left";
 var PROGRESS_TAB = "Progress";
 var FEEDBACK_TAB = "Feedback";
 var PROGRESS_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exercise", "Done", "Key"];
@@ -239,7 +241,130 @@ function onOpen() {
     .createMenu("ScoutCo")
     .addItem("Set up tabs", "setupSheets")
     .addItem("Add a new client", "addClient")
+    .addItem("Update weeks left", "updateWeeksLeft")
     .addToUi();
+  try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
+}
+
+/* ------------------------------------------------------------------ */
+/* Weeks left: when each client's written program runs out.            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rebuilds the "Weeks left" tab: one row per active client showing their
+ * current block and week, how many written weeks they have left (counting
+ * this week), and the date their last written week finishes.
+ * Works it out from the Blocks tab start dates, so nothing needs ticking.
+ */
+function updateWeeksLeft(quiet) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tz = ss.getSpreadsheetTimeZone();
+  var DAY = 24 * 60 * 60 * 1000;
+  var dayNo = function (d) { return Math.round(Date.parse(Utilities.formatDate(d, tz, "yyyy-MM-dd") + "T00:00:00Z") / DAY); };
+  var fromDayNo = function (n) { var d = new Date(n * DAY); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
+  var today = dayNo(new Date());
+
+  // Weeks written per program and block, in the order they appear on the Programs tab.
+  var programs = {};
+  readTab_(ss, PROGRAMS_TAB).forEach(function (r) {
+    if (String(r.Exercise).trim() === "") return;
+    var p = String(r.Program).trim().toLowerCase();
+    var b = String(r.Block || "").trim();
+    var prog = programs[p] || (programs[p] = { order: [], weeks: {} });
+    if (!(b in prog.weeks)) { prog.order.push(b); prog.weeks[b] = {}; }
+    prog.weeks[b][String(r.Week || "Program").trim()] = true;
+  });
+
+  // Start dates from the Blocks tab.
+  var starts = {};
+  var bSheet = ss.getSheetByName(BLOCKS_TAB);
+  var bVals = bSheet ? bSheet.getDataRange().getValues() : [];
+  if (bVals.length > 1) {
+    var h = bVals[0].map(function (x) { return String(x).trim().toLowerCase(); });
+    var cP = h.indexOf("program"), cB = h.indexOf("block"), cS = h.indexOf("start date");
+    if (cP >= 0 && cB >= 0 && cS >= 0) {
+      bVals.slice(1).forEach(function (r) {
+        var d = r[cS];
+        if (Object.prototype.toString.call(d) !== "[object Date]" || isNaN(d)) return;
+        starts[String(r[cP]).trim().toLowerCase() + "|" + String(r[cB]).trim().toLowerCase()] = dayNo(d);
+      });
+    }
+  }
+
+  var rows = [];
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    if (isOff_(c.Active) || String(c.Code).trim() === "") return;
+    var name = String(c.Name || "").trim();
+    var progName = String(c.Program || c.Name || "").trim();
+    var prog = programs[progName.toLowerCase()];
+    if (!prog) { rows.push({ left: -2, cells: [name, "", "", "", "", "No program on the Programs tab yet"] }); return; }
+
+    // Lay the blocks out on the calendar. A block with no start date follows on from the one before it.
+    var blocks = [], prevEnd = null, undated = [];
+    prog.order.forEach(function (b) {
+      var weeks = Object.keys(prog.weeks[b]).length;
+      var start = starts[progName.toLowerCase() + "|" + b.toLowerCase()];
+      if (start == null) {
+        if (prevEnd == null) { undated.push(b || "(no block name)"); return; }
+        start = prevEnd;
+        undated.push(b || "(no block name)");
+      }
+      blocks.push({ name: b, start: start, weeks: weeks, end: start + weeks * 7 });
+      prevEnd = start + weeks * 7;
+    });
+    if (!blocks.length) { rows.push({ left: -2, cells: [name, "", "", "", "", "Add a start date on the Blocks tab"] }); return; }
+
+    var lastEnd = Math.max.apply(null, blocks.map(function (b) { return b.end; }));
+    var current = null;
+    blocks.forEach(function (b) { if (today >= b.start && today < b.end) current = b; });
+    var firstStart = Math.min.apply(null, blocks.map(function (b) { return b.start; }));
+
+    var nowText = "", weekText = "";
+    if (current) {
+      nowText = current.name || "Program";
+      weekText = "Week " + (Math.floor((today - current.start) / 7) + 1) + " of " + current.weeks;
+    } else if (today < firstStart) {
+      nowText = "Starts " + Utilities.formatDate(fromDayNo(firstStart), tz, "d MMM");
+    } else if (today >= lastEnd) {
+      nowText = "Finished";
+    } else {
+      nowText = "Between blocks";
+    }
+
+    var left = Math.max(0, Math.ceil((lastEnd - Math.max(today, firstStart)) / 7));
+    var status = left === 0 ? "Program has run out" : left <= 2 ? "Write next block now" : "";
+    var notes = [status];
+    if (undated.length) notes.push("No start date for " + undated.join(", ") + " (counted as following on)");
+    rows.push({ left: left, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". ")] });
+  });
+
+  rows.sort(function (a, b) { return a.left - b.left; });
+  // Put "no program yet" rows last.
+  rows = rows.filter(function (r) { return r.left >= 0; }).concat(rows.filter(function (r) { return r.left < 0; }));
+
+  var sheet = ss.getSheetByName(WEEKS_LEFT_TAB) || ss.insertSheet(WEEKS_LEFT_TAB);
+  sheet.clear();
+  var headers = ["Client", "Now on", "Week", "Weeks left", "Last week ends", "Heads up"];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  styleHeader_(sheet, headers.length);
+  if (rows.length) {
+    var range = sheet.getRange(2, 1, rows.length, headers.length);
+    range.setValues(rows.map(function (r) { return r.cells; }));
+    sheet.getRange(2, 5, rows.length, 1).setNumberFormat("ddd d mmm yyyy");
+    sheet.getRange(2, 4, rows.length, 1).setHorizontalAlignment("center");
+    rows.forEach(function (r, i) {
+      var colour = r.left < 0 ? "#f3f4f6" : r.left === 0 ? "#fecaca" : r.left <= 2 ? "#fde68a" : null;
+      if (colour) sheet.getRange(i + 2, 1, 1, headers.length).setBackground(colour);
+    });
+  }
+  sheet.getRange(rows.length + 3, 1).setValue("Updated " + Utilities.formatDate(new Date(), tz, "EEE d MMM, h:mm a") +
+    ". Counts from the Blocks tab start dates and the weeks on the Programs tab. Weeks left includes this week.")
+    .setFontColor("#6b7280").setFontStyle("italic");
+  sheet.setColumnWidth(1, 180);
+  sheet.setColumnWidth(2, 130);
+  sheet.setColumnWidth(5, 150);
+  sheet.setColumnWidth(6, 320);
+  if (!quiet) { ss.setActiveSheet(sheet); }
 }
 
 /** Creates the Clients and Programs tabs with headings and an example. */

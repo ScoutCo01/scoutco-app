@@ -67,6 +67,16 @@ Changes are live as soon as you type them. Clients see them the next time they o
 
 Both tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
 
+## Weeks left (when to write the next block)
+
+The **Weeks left** tab shows every active client with their current block and week, how many written weeks they have left (counting this week), and the date their last written week ends. Nothing needs ticking: it works it out from the Blocks tab start dates and the number of weeks on the Programs tab.
+
+- **Yellow:** 2 weeks or fewer left, time to write the next block.
+- **Red:** their program has run out.
+- A block with no start date is counted as starting straight after the block before it.
+
+It refreshes every time you open the sheet, or any time from **ScoutCo → Update weeks left**.
+
 ## Sending the app to a client
 
 **Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:
