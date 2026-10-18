@@ -58,18 +58,27 @@ function doGet(e) {
 
 /** Puts the time a client opened the app in a "Last opened" column on the Clients tab. */
 function recordOpen_(ss, code) {
-  var sheet = ss.getSheetByName(CLIENTS_TAB);
-  var values = sheet.getDataRange().getDisplayValues();
-  var h = values[0].map(function (x) { return String(x).trim().toLowerCase(); });
-  var cCode = h.indexOf("code"), cLast = h.indexOf("last opened");
-  if (cCode < 0) return;
-  if (cLast < 0) {
-    cLast = h.length; // first column after everything already in use
-    sheet.getRange(1, cLast + 1).setValue("Last opened").setFontWeight("bold").setBackground("#ede9fe");
-    sheet.getRange(2, cLast + 1, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
-  }
-  for (var i = 1; i < values.length; i++) {
-    if (normalise_(values[i][cCode]) === code) { sheet.getRange(i + 1, cLast + 1).setValue(new Date()); return; }
+  // The app can ask for the program twice at once (e.g. opening and refreshing), so take turns.
+  // Otherwise both could add a "Last opened" heading and you'd get two columns.
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return;
+  try {
+    var sheet = ss.getSheetByName(CLIENTS_TAB);
+    var values = sheet.getDataRange().getDisplayValues();
+    var h = values[0].map(function (x) { return String(x).trim().toLowerCase(); });
+    var cCode = h.indexOf("code"), cLast = h.indexOf("last opened");
+    if (cCode < 0) return;
+    if (cLast < 0) {
+      cLast = h.length; // first column after everything already in use
+      sheet.getRange(1, cLast + 1).setValue("Last opened").setFontWeight("bold").setBackground("#ede9fe");
+      sheet.getRange(2, cLast + 1, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+    }
+    for (var i = 1; i < values.length; i++) {
+      if (normalise_(values[i][cCode]) === code) { sheet.getRange(i + 1, cLast + 1).setValue(new Date()); break; }
+    }
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
   }
 }
 
