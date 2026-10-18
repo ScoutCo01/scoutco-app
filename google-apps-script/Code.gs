@@ -42,6 +42,8 @@ function doGet(e) {
     return json_({ error: "That code wasn't recognised. Check it with your coach." });
   }
 
+  try { recordOpen_(ss, code); } catch (err) { /* the program still loads */ }
+
   var programName = String(client.Program || client.Name || "").trim();
   var rows = readTab_(ss, PROGRAMS_TAB).filter(function (r) {
     return String(r.Program).trim().toLowerCase() === programName.toLowerCase() && String(r.Exercise).trim() !== "";
@@ -52,6 +54,23 @@ function doGet(e) {
     program: { name: programName, blocks: addStartDates_(ss, programName, groupBlocks_(rows)) },
     updated: new Date().toISOString()
   });
+}
+
+/** Puts the time a client opened the app in a "Last opened" column on the Clients tab. */
+function recordOpen_(ss, code) {
+  var sheet = ss.getSheetByName(CLIENTS_TAB);
+  var values = sheet.getDataRange().getDisplayValues();
+  var h = values[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cCode = h.indexOf("code"), cLast = h.indexOf("last opened");
+  if (cCode < 0) return;
+  if (cLast < 0) {
+    cLast = h.length; // first column after everything already in use
+    sheet.getRange(1, cLast + 1).setValue("Last opened").setFontWeight("bold").setBackground("#ede9fe");
+    sheet.getRange(2, cLast + 1, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  }
+  for (var i = 1; i < values.length; i++) {
+    if (normalise_(values[i][cCode]) === code) { sheet.getRange(i + 1, cLast + 1).setValue(new Date()); return; }
+  }
 }
 
 /** Called by the app to save ticks and session comments: POST {code, events: [...]} */
@@ -324,10 +343,11 @@ function updateWeeksLeft(quiet) {
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
     if (isOff_(c.Active) || String(c.Code).trim() === "") return;
     var name = String(c.Name || "").trim();
+    var opened = String(c["Last opened"] || "").trim() || "Not yet";
     var progName = String(c.Program || c.Name || "").trim();
     var key = progName.toLowerCase();
     var prog = programs[key];
-    if (!prog) { rows.push({ left: -2, cells: [name, "", "", "", "", "No exercises on the Programs tab for \"" + progName + "\" yet"] }); return; }
+    if (!prog) { rows.push({ left: -2, cells: [name, "", "", "", "", "No exercises on the Programs tab for \"" + progName + "\" yet", opened] }); return; }
 
     // Lay the blocks out on the calendar. A block with no start date follows on from the one
     // before it (or, if it comes first, finishes the day before the next dated block starts).
@@ -351,7 +371,7 @@ function updateWeeksLeft(quiet) {
       else if (bad.length) why = "The start date for " + bad[0] + " (\"" + badDates[key + "|" + bad[0].toLowerCase()] + "\") isn't being read as a date. Retype it like 19/10/2026";
       else if (blockNames[key]) why = "Block names don't match. Programs tab has: " + prog.order.join(", ") + ". Blocks tab has: " + blockNames[key].join(", ");
       else why = "No rows on the Blocks tab with \"" + progName + "\" in the Program column (it must match the Programs tab exactly)";
-      rows.push({ left: -2, cells: [name, "", "", "", "", why] });
+      rows.push({ left: -2, cells: [name, "", "", "", "", why, opened] });
       return;
     }
 
@@ -376,7 +396,7 @@ function updateWeeksLeft(quiet) {
     var status = left === 0 ? "Program has run out" : left <= 2 ? "Write next block now" : "";
     var notes = [status];
     if (undated.length) notes.push("No start date for " + undated.join(", ") + " (worked out from the blocks around it)");
-    rows.push({ left: left, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". ")] });
+    rows.push({ left: left, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". "), opened] });
   });
 
   rows.sort(function (a, b) { return a.left - b.left; });
@@ -385,7 +405,7 @@ function updateWeeksLeft(quiet) {
 
   var sheet = ss.getSheetByName(WEEKS_LEFT_TAB) || ss.insertSheet(WEEKS_LEFT_TAB);
   sheet.clear();
-  var headers = ["Client", "Now on", "Week", "Weeks left", "Last week ends", "Heads up"];
+  var headers = ["Client", "Now on", "Week", "Weeks left", "Last week ends", "Heads up", "Last opened app"];
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   styleHeader_(sheet, headers.length);
   if (rows.length) {
@@ -405,6 +425,7 @@ function updateWeeksLeft(quiet) {
   sheet.setColumnWidth(2, 130);
   sheet.setColumnWidth(5, 150);
   sheet.setColumnWidth(6, 320);
+  sheet.setColumnWidth(7, 160);
   if (!quiet) { ss.setActiveSheet(sheet); }
 }
 

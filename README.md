@@ -78,6 +78,10 @@ The **Weeks left** tab shows every active client with their current block and we
 
 It refreshes every time you open the sheet, or any time from **ScoutCo → Update weeks left**.
 
+## When a client last opened the app
+
+Each time a client opens the app, the time is saved in a **Last opened** column on the Clients tab (added automatically the first time). It also shows on the Weeks left tab.
+
 ## Sending the app to a client
 
 **Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:
