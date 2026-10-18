@@ -131,6 +131,7 @@ function tab_(ss, name, headers) {
     sheet = ss.insertSheet(name);
     sheet.appendRow(headers);
     styleHeader_(sheet, headers.length);
+    sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy");
   }
   return sheet;
 }
@@ -256,7 +257,17 @@ function onOpen() {
     .addItem("Add a new client", "addClient")
     .addItem("Update weeks left", "updateWeeksLeft")
     .addToUi();
+  try { formatDates_(); } catch (err) { /* not essential */ }
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
+}
+
+/** Shows the dates on Progress and Feedback as dd/mm/yyyy (new rows pick this up too). */
+function formatDates_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  [PROGRESS_TAB, FEEDBACK_TAB].forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (sheet) sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy");
+  });
 }
 
 /* ------------------------------------------------------------------ */
