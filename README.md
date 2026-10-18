@@ -73,7 +73,8 @@ The **Weeks left** tab shows every active client with their current block and we
 
 - **Yellow:** 2 weeks or fewer left, time to write the next block.
 - **Red:** their program has run out.
-- A block with no start date is counted as starting straight after the block before it.
+- A block with no start date is worked out from the blocks around it (it starts when the block before ends, or ends when the next one starts).
+- If a client shows no dates, the Heads up column says why (for example, block names that differ between the Programs and Blocks tabs).
 
 It refreshes every time you open the sheet, or any time from **ScoutCo → Update weeks left**.
 

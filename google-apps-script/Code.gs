@@ -152,8 +152,8 @@ function addStartDates_(ss, programName, blocks) {
   var starts = {};
   values.slice(1).forEach(function (r) {
     if (String(r[cP]).trim().toLowerCase() !== programName.toLowerCase()) return;
-    var d = r[cS];
-    if (Object.prototype.toString.call(d) === "[object Date]" && !isNaN(d)) {
+    var d = toDate_(r[cS]);
+    if (d) {
       starts[String(r[cB]).trim().toLowerCase()] = Utilities.formatDate(d, tz, "yyyy-MM-dd");
     }
   });
@@ -228,6 +228,19 @@ function readTab_(ss, name) {
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
+/** Reads a start date whether the cell holds a real date, a date number, or text like 19/10/2026 or 2026-10-19. */
+function toDate_(v) {
+  if (Object.prototype.toString.call(v) === "[object Date]") return isNaN(v) ? null : v;
+  if (typeof v === "number" && v > 30000 && v < 80000) return new Date(Math.round((v - 25569) * 86400000) + new Date().getTimezoneOffset() * 60000);
+  var t = String(v || "").trim(), m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/))) return new Date(+m[1], +m[2] - 1, +m[3]);
+  if ((m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/))) return new Date(m[3].length === 2 ? 2000 + +m[3] : +m[3], +m[2] - 1, +m[1]);
+  if ((m = t.match(/^(?:[a-z]+,?\s+)?(\d{1,2})\s+([a-z]{3})[a-z]*\.?,?\s+(\d{4})$/i))) {
+    var mon = "janfebmaraprmayjunjulaugsepoctnovdec".indexOf(m[2].toLowerCase()) / 3;
+    if (mon >= 0 && mon % 1 === 0) return new Date(+m[3], mon, +m[1]);
+  }
+  return null;
+}
 function normalise_(s) { return String(s || "").trim().toUpperCase(); }
 function text_(v) { return v == null ? "" : String(v).trim(); }
 function isOff_(v) { var s = String(v || "").trim().toLowerCase(); return s === "no" || s === "n" || s === "false" || s === "off"; }
@@ -275,18 +288,23 @@ function updateWeeksLeft(quiet) {
     prog.weeks[b][String(r.Week || "Program").trim()] = true;
   });
 
-  // Start dates from the Blocks tab.
-  var starts = {};
+  // Start dates from the Blocks tab. Also remembers rows whose date couldn't be read.
+  var starts = {}, badDates = {}, blockNames = {};
   var bSheet = ss.getSheetByName(BLOCKS_TAB);
   var bVals = bSheet ? bSheet.getDataRange().getValues() : [];
-  if (bVals.length > 1) {
+  var hasBlockHeaders = false;
+  if (bVals.length) {
     var h = bVals[0].map(function (x) { return String(x).trim().toLowerCase(); });
     var cP = h.indexOf("program"), cB = h.indexOf("block"), cS = h.indexOf("start date");
-    if (cP >= 0 && cB >= 0 && cS >= 0) {
+    hasBlockHeaders = cP >= 0 && cB >= 0 && cS >= 0;
+    if (hasBlockHeaders) {
       bVals.slice(1).forEach(function (r) {
-        var d = r[cS];
-        if (Object.prototype.toString.call(d) !== "[object Date]" || isNaN(d)) return;
-        starts[String(r[cP]).trim().toLowerCase() + "|" + String(r[cB]).trim().toLowerCase()] = dayNo(d);
+        var p = String(r[cP]).trim().toLowerCase(), b = String(r[cB]).trim().toLowerCase();
+        if (!p) return;
+        (blockNames[p] = blockNames[p] || []).push(String(r[cB]).trim());
+        var d = toDate_(r[cS]);
+        if (d) starts[p + "|" + b] = dayNo(d);
+        else if (String(r[cS]).trim() !== "") badDates[p + "|" + b] = String(r[cS]).trim();
       });
     }
   }
@@ -296,23 +314,35 @@ function updateWeeksLeft(quiet) {
     if (isOff_(c.Active) || String(c.Code).trim() === "") return;
     var name = String(c.Name || "").trim();
     var progName = String(c.Program || c.Name || "").trim();
-    var prog = programs[progName.toLowerCase()];
-    if (!prog) { rows.push({ left: -2, cells: [name, "", "", "", "", "No program on the Programs tab yet"] }); return; }
+    var key = progName.toLowerCase();
+    var prog = programs[key];
+    if (!prog) { rows.push({ left: -2, cells: [name, "", "", "", "", "No exercises on the Programs tab for \"" + progName + "\" yet"] }); return; }
 
-    // Lay the blocks out on the calendar. A block with no start date follows on from the one before it.
-    var blocks = [], prevEnd = null, undated = [];
-    prog.order.forEach(function (b) {
-      var weeks = Object.keys(prog.weeks[b]).length;
-      var start = starts[progName.toLowerCase() + "|" + b.toLowerCase()];
-      if (start == null) {
-        if (prevEnd == null) { undated.push(b || "(no block name)"); return; }
-        start = prevEnd;
-        undated.push(b || "(no block name)");
-      }
-      blocks.push({ name: b, start: start, weeks: weeks, end: start + weeks * 7 });
-      prevEnd = start + weeks * 7;
+    // Lay the blocks out on the calendar. A block with no start date follows on from the one
+    // before it (or, if it comes first, finishes the day before the next dated block starts).
+    var list = prog.order.map(function (b) {
+      return { name: b, weeks: Object.keys(prog.weeks[b]).length, start: starts[key + "|" + b.toLowerCase()] };
     });
-    if (!blocks.length) { rows.push({ left: -2, cells: [name, "", "", "", "", "Add a start date on the Blocks tab"] }); return; }
+    var undated = list.filter(function (b) { return b.start == null; }).map(function (b) { return b.name || "(no block name)"; });
+    for (var i = 1; i < list.length; i++) {
+      if (list[i].start == null && list[i - 1].start != null) list[i].start = list[i - 1].start + list[i - 1].weeks * 7;
+    }
+    for (var j = list.length - 2; j >= 0; j--) {
+      if (list[j].start == null && list[j + 1].start != null) list[j].start = list[j + 1].start - list[j].weeks * 7;
+    }
+    var blocks = list.filter(function (b) { return b.start != null; });
+    blocks.forEach(function (b) { b.end = b.start + b.weeks * 7; });
+
+    if (!blocks.length) {
+      var why;
+      var bad = prog.order.filter(function (b) { return badDates[key + "|" + b.toLowerCase()]; });
+      if (!hasBlockHeaders) why = "The Blocks tab needs the headings Program, Block, Start date in row 1";
+      else if (bad.length) why = "The start date for " + bad[0] + " (\"" + badDates[key + "|" + bad[0].toLowerCase()] + "\") isn't being read as a date. Retype it like 19/10/2026";
+      else if (blockNames[key]) why = "Block names don't match. Programs tab has: " + prog.order.join(", ") + ". Blocks tab has: " + blockNames[key].join(", ");
+      else why = "No rows on the Blocks tab with \"" + progName + "\" in the Program column (it must match the Programs tab exactly)";
+      rows.push({ left: -2, cells: [name, "", "", "", "", why] });
+      return;
+    }
 
     var lastEnd = Math.max.apply(null, blocks.map(function (b) { return b.end; }));
     var current = null;
@@ -334,7 +364,7 @@ function updateWeeksLeft(quiet) {
     var left = Math.max(0, Math.ceil((lastEnd - Math.max(today, firstStart)) / 7));
     var status = left === 0 ? "Program has run out" : left <= 2 ? "Write next block now" : "";
     var notes = [status];
-    if (undated.length) notes.push("No start date for " + undated.join(", ") + " (counted as following on)");
+    if (undated.length) notes.push("No start date for " + undated.join(", ") + " (worked out from the blocks around it)");
     rows.push({ left: left, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". ")] });
   });
 
