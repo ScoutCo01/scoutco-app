@@ -137,6 +137,15 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 .stat b { color: var(--muted); font-weight: 500; margin-right: 4px; }
 .ex-notes { color: var(--muted); font-size: 14px; margin-top: 6px; white-space: pre-wrap; }
 .ex-video { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 14px; font-weight: 600; text-decoration: none; }
+.ex-log { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; }
+.ex-log label { font-size: 13px; color: var(--muted); }
+.ex-log input {
+  width: 110px; font: inherit; font-size: 16px; color: var(--text); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+}
+.ex-log input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ex-last { font-size: 13px; color: var(--muted); }
+.ex-last b { color: var(--text); font-weight: 600; }
 .day-foot { padding: 10px 16px 14px; border-top: 1px solid var(--border); text-align: right; }
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }
 

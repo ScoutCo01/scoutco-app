@@ -9,10 +9,11 @@
   var KEY_OUTBOX = "scoutco.outbox";
   var KEY_COMMENTS = "scoutco.comments";
   var KEY_TICKS = "scoutco.ticks";
+  var KEY_WEIGHTS = "scoutco.weights";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, info: {} };
+  var state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {} };
 
   // ---------- storage helpers (never let storage errors break the app) ----------
   function load(key, fallback) {
@@ -109,6 +110,7 @@
 
   function setData(data, offline) {
     state.data = data;
+    mergeWeights(data && data.weights);
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
     var blocks = getBlocks(data);
     // On a new day, go back to the current week (the coach's dates win over the last tab tapped).
@@ -129,7 +131,7 @@
 
   function signOut(message) {
     remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX);
-    state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, info: {} };
+    state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {} };
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
     $("loginError").classList.toggle("hidden", !message);
@@ -145,7 +147,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !(ev.type === "tick" && x.type === "tick" && x.key === ev.key); // only the latest tick state matters
+      return !((ev.type === "tick" || ev.type === "weight") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -240,15 +242,56 @@
     save(KEY_TICKS, t);
   }
 
+  // ---------- weights used ----------
+  // Saved on the phone as { "<code>|<block>|<week>|<session>|<n>": { w: "40 kg", ex: "back squat", wk: "Week 2", at: ms } }
+  function getWeights() { return load(KEY_WEIGHTS, {}); }
+  function exName(s) { return String(s || "").trim().toLowerCase(); }
+  function setWeight(key, w, ex, wk) {
+    var all = getWeights();
+    if (w) all[key] = { w: w, ex: exName(ex), wk: wk || "", at: Date.now() };
+    else delete all[key];
+    save(KEY_WEIGHTS, all);
+  }
+  // The sheet sends back everything this client has logged, so weights follow them to a new phone.
+  function mergeWeights(server) {
+    if (!server || !state.code) return;
+    var all = getWeights(), changed = false;
+    var waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "weight") waiting[x.key] = true; });
+    Object.keys(server).forEach(function (rest) {
+      var k = state.code + "|" + rest, sv = server[rest], mine = all[k];
+      if (waiting[rest] || !sv) return; // not saved to the sheet yet: the phone's value is newer
+      if (!mine || (sv.at || 0) >= (mine.at || 0)) {
+        if (sv.w) all[k] = { w: String(sv.w), ex: exName(sv.ex), wk: sv.wk || "", at: sv.at || 0 };
+        else delete all[k];
+        changed = true;
+      }
+    });
+    if (changed) save(KEY_WEIGHTS, all);
+  }
+  // The most recent weight logged for the same exercise in another session.
+  function lastTime(key, name, weights) {
+    var target = exName(name), prefix = state.code + "|", best = null;
+    if (!target) return null;
+    Object.keys(weights).forEach(function (k) {
+      var v = weights[k];
+      if (k === key || k.indexOf(prefix) !== 0 || !v || v.ex !== target || !v.w) return;
+      if (!best || (v.at || 0) > (best.at || 0)) best = v;
+    });
+    return best;
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
     var active = document.activeElement;
-    var typing = active && active.getAttribute && active.getAttribute("data-comment");
+    var attr = active && active.getAttribute && (active.getAttribute("data-comment") != null ? "data-comment" :
+      active.getAttribute("data-weight") != null ? "data-weight" : null);
+    var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     renderAll();
     if (typing) {
-      var again = document.querySelector('[data-comment="' + CSS.escape(typing) + '"]');
+      var again = document.querySelector("[" + attr + '="' + CSS.escape(typing) + '"]');
       if (again) { again.focus(); try { again.setSelectionRange(caret[0], caret[1]); } catch (e) { /* ignore */ } }
     }
   }
@@ -308,6 +351,7 @@
 
     var week = weeks.filter(function (w) { return w.name === state.week; })[0];
     var ticks = getTicks();
+    var weights = getWeights();
     $("days").innerHTML = !week ? "" : week.days.map(function (day, di) {
       var done = 0;
       var dayKey = scope(week.name, day.name);
@@ -316,10 +360,10 @@
       var items = day.exercises.map(function (ex, i) {
         var k = tickKey(week.name, day.name, i);
         state.info[k] = { block: where.block, week: where.week, session: where.session,
-          exercise: (ex.label ? ex.label + " " : "") + ex.name, key: k.slice(state.code.length + 1) };
+          exercise: (ex.label ? ex.label + " " : "") + ex.name, name: ex.name, key: k.slice(state.code.length + 1) };
         var isDone = !!ticks[k];
         if (isDone) done++;
-        return exerciseHtml(ex, k, isDone);
+        return exerciseHtml(ex, k, isDone, weights);
       }).join("");
       var total = day.exercises.length;
       var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === firstUnfinished(week, ticks));
@@ -351,7 +395,7 @@
     return '<div class="day-comment">' +
       '<label class="comment-label" for="c-' + esc(dayKey) + '">Comments for your coach</label>' + sent +
       '<textarea id="c-' + esc(dayKey) + '" data-comment="' + esc(dayKey) + '" rows="3" maxlength="2000" ' +
-        'placeholder="How did it feel? Weights used, PBs, pain or questions…">' + esc(state.drafts[dayKey] || "") + "</textarea>" +
+        'placeholder="How did it feel? PBs, pain or questions…">' + esc(state.drafts[dayKey] || "") + "</textarea>" +
       '<div class="comment-actions"><button class="btn small primary" data-send="' + esc(dayKey) + '">Send</button></div>' +
     "</div>";
   }
@@ -366,7 +410,7 @@
     return -1;
   }
 
-  function exerciseHtml(ex, key, isDone) {
+  function exerciseHtml(ex, key, isDone, weights) {
     var stats = [
       ["Sets", ex.sets], ["Reps", ex.reps], ["Load", ex.load], ["Tempo", ex.tempo], ["Rest", ex.rest]
     ].filter(function (s) { return s[1] !== "" && s[1] != null; })
@@ -381,7 +425,21 @@
         (stats ? '<div class="ex-stats">' + stats + "</div>" : "") +
         (ex.notes ? '<div class="ex-notes">' + esc(ex.notes) + "</div>" : "") +
         (video ? '<a class="ex-video" href="' + esc(video) + '" target="_blank" rel="noopener">▶ Watch demo</a>' : "") +
+        weightHtml(ex, key, weights) +
       "</div>" +
+    "</div>";
+  }
+
+  function weightHtml(ex, key, weights) {
+    var saved = weights[key];
+    var value = state.weightDrafts[key] != null ? state.weightDrafts[key] : (saved ? saved.w : "");
+    var prev = lastTime(key, ex.name, weights);
+    var id = "w-" + key;
+    return '<div class="ex-log">' +
+      '<label for="' + esc(id) + '">Weight used</label>' +
+      '<input id="' + esc(id) + '" data-weight="' + esc(key) + '" type="text" maxlength="40" autocomplete="off" ' +
+        'enterkeyhint="done" placeholder="e.g. 40 kg" value="' + esc(value) + '">' +
+      (prev ? '<span class="ex-last">Last time: <b>' + esc(prev.w) + "</b>" + (prev.wk ? " · " + esc(prev.wk) : "") + "</span>" : "") +
     "</div>";
   }
 
@@ -460,7 +518,31 @@
   $("days").addEventListener("input", function (e) {
     var k = e.target.getAttribute && e.target.getAttribute("data-comment");
     if (k) state.drafts[k] = e.target.value;
+    var wk = e.target.getAttribute && e.target.getAttribute("data-weight");
+    if (wk) state.weightDrafts[wk] = e.target.value;
   });
+  // A weight is saved when the client leaves the box or taps Done/Enter.
+  $("days").addEventListener("change", function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute("data-weight");
+    if (k) saveWeight(k, e.target.value);
+  });
+  $("days").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target.getAttribute && e.target.getAttribute("data-weight") != null) e.target.blur();
+  });
+
+  function saveWeight(k, value) {
+    var w = String(value || "").trim().slice(0, 40);
+    delete state.weightDrafts[k];
+    var old = getWeights()[k];
+    if ((old ? old.w : "") === w) return;
+    var i = state.info[k] || {};
+    setWeight(k, w, i.name, i.week);
+    if (i.key) queue({ type: "weight", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.name, weight: w });
+    var input = document.querySelector('[data-weight="' + CSS.escape(k) + '"]');
+    if (input) keepOpen(input);
+    // Wait a moment so that if they tapped straight into the next box, it keeps the cursor.
+    setTimeout(render, 0);
+  }
 
   function sendTick(k, on) {
     var i = state.info[k];

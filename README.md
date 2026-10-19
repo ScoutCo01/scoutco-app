@@ -64,8 +64,34 @@ Changes are live as soon as you type them. Clients see them the next time they o
 
 - **Progress:** each time a client ticks or unticks an exercise, a row is updated with ✓ and the time.
 - **Feedback:** each session has a "Comments for your coach" box. Comments land here, and you get an email for each one.
+- **Weights:** under each exercise there's a "Weight used" box. Whatever the client types (for example "40 kg") is saved here, one row per exercise per session. Next time that exercise comes up, the app shows "Last time: 40 kg". Filter the Exercise or Client column to see someone's progress on a lift.
 
-Both tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
+These tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
+
+## Weeks left (when to write the next block)
+
+The **Weeks left** tab shows every active client with their current block and week, how many written weeks they have left (counting this week), and the date their last written week ends. Nothing needs ticking: it works it out from the Blocks tab start dates and the number of weeks on the Programs tab.
+
+- **Yellow:** 2 weeks or fewer left, time to write the next block.
+- **Red:** their program has run out.
+- A block with no start date is worked out from the blocks around it (it starts when the block before ends, or ends when the next one starts).
+- If a client shows no dates, the Heads up column says why (for example, block names that differ between the Programs and Blocks tabs).
+
+It refreshes every time you open the sheet, or any time from **ScoutCo → Update weeks left**.
+
+## Monday summary email
+
+Once a week you get one email covering the last 7 days:
+
+- **Check in with:** clients who haven't ticked a session in 7 days, with when they last trained and last opened the app.
+- **Book their next block:** clients with 2 weeks or less left (or whose program has run out).
+- **Last 7 days:** a table of every client with sessions done, exercises ticked, comments and the weights they logged.
+
+Turn it on once with **ScoutCo → Turn on Monday email** (Google asks for permission the first time). It arrives every Monday at about 7am. **ScoutCo → Send weekly summary now** sends one straight away, and **ScoutCo → Turn off Monday email** stops it.
+
+## When a client last opened the app
+
+Each time a client opens the app, the time is saved in a **Last opened** column on the Clients tab (added automatically the first time). It also shows on the Weeks left tab.
 
 ## Sending the app to a client
 
