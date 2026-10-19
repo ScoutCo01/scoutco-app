@@ -93,6 +93,14 @@ Turn it on once with **ScoutCo → Turn on Monday email** (Google asks for permi
 
 Each time a client opens the app, the time is saved in a **Last opened** column on the Clients tab (added automatically the first time). It also shows on the Weeks left tab.
 
+## Your own coach schedule
+
+Add yourself as a client on the Clients tab and set **Type** to `Coach`. Your app then becomes a weekly schedule:
+
+- On the Programs tab, use your own program name. Make each **Day** a weekday (e.g. Monday), and each row a client, e.g. Order `1`, Exercise `6:30pm Jonny`.
+- Under each client there's a **Session notes** box instead of "Weight used". Notes save to a **Session notes** tab, and the app shows your note from their last session.
+- Your schedule has no "Comments for your coach" box and is left out of the Monday email.
+
 ## Sending the app to a client
 
 **Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:

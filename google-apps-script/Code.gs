@@ -11,6 +11,7 @@
  *   Progress: filled in by the app when clients tick exercises
  *   Feedback: filled in by the app when clients send session comments (you also get an email)
  *   Weights:  filled in by the app when clients type the weight they used on an exercise
+ *   Session notes: filled in by the app when you (Clients Type "Coach") write notes after each client
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
  * Monday summary email: ScoutCo menu → "Turn on Monday email" (see sendWeeklySummary below).
@@ -25,6 +26,8 @@ var PROGRESS_TAB = "Progress";
 var FEEDBACK_TAB = "Feedback";
 var WEIGHTS_TAB = "Weights";
 var WEIGHT_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exercise", "Weight", "Key"];
+var NOTES_TAB = "Session notes";
+var NOTE_HEADERS = ["Updated", "Coach", "Block", "Week", "Day", "Client", "Notes", "Key"];
 var PROGRESS_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exercise", "Done", "Key"];
 var FEEDBACK_HEADERS = ["Received", "Client", "Block", "Week", "Session", "Comment", "ID"];
 var BLOCK_HEADERS = ["Program", "Block", "Start date"];
@@ -68,14 +71,17 @@ function doGet(e) {
  */
 function weightsFor_(ss, code) {
   var out = {};
-  var sheet = ss.getSheetByName(WEIGHTS_TAB);
-  if (!sheet || sheet.getLastRow() < 2) return out;
   var prefix = code + "|";
-  sheet.getRange(2, 1, sheet.getLastRow() - 1, WEIGHT_HEADERS.length).getValues().forEach(function (r) {
-    var key = String(r[7]);
-    if (key.indexOf(prefix) !== 0) return;
-    var at = r[0] instanceof Date ? r[0].getTime() : 0;
-    out[key.slice(prefix.length)] = { w: text_(r[6]).replace(/^'/, ""), ex: text_(r[5]), wk: text_(r[3]), at: at };
+  // The coach's session notes come back the same way, so they show on any phone too.
+  [WEIGHTS_TAB, NOTES_TAB].forEach(function (name) {
+    var sheet = ss.getSheetByName(name);
+    if (!sheet || sheet.getLastRow() < 2) return;
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues().forEach(function (r) {
+      var key = String(r[7]);
+      if (key.indexOf(prefix) !== 0) return;
+      var at = r[0] instanceof Date ? r[0].getTime() : 0;
+      out[key.slice(prefix.length)] = { w: text_(r[6]).replace(/^'/, ""), ex: text_(r[5]), wk: text_(r[3]), at: at };
+    });
   });
   return out;
 }
@@ -121,7 +127,7 @@ function doPost(e) {
   try {
     var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
     var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
-    var weights = null, wKeys = null;
+    var weights = null, wKeys = null, notes = null, nKeys = null;
     var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var name = String(client.Name || client.Code);
@@ -150,6 +156,20 @@ function doPost(e) {
         } else {
           weights.appendRow(wRow);
           wKeys.push(wKey);
+        }
+      } else if (ev.type === "note") {
+        if (!notes) {
+          notes = tab_(ss, NOTES_TAB, NOTE_HEADERS);
+          nKeys = notes.getRange(1, 8, Math.max(notes.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+        }
+        var nKey = normalise_(client.Code) + "|" + clip_(ev.key, 300);
+        var nRow = [new Date(), cell_(name), cell_(ev.block), cell_(ev.week), cell_(ev.session), cell_(ev.exercise), cell_(clip_(ev.weight, 2000).trim()), nKey];
+        var nAt = nKeys.indexOf(nKey);
+        if (nAt > 0) {
+          notes.getRange(nAt + 1, 1, 1, nRow.length).setValues([nRow]);
+        } else {
+          notes.appendRow(nRow);
+          nKeys.push(nKey);
         }
       } else if (ev.type === "comment") {
         var text = clip_(ev.text, 2000).trim();
@@ -543,7 +563,8 @@ function sendSummary_() {
   var fmt = function (d) { return Utilities.formatDate(d, tz, "EEE d MMM"); };
 
   var clients = readTab_(ss, CLIENTS_TAB).filter(function (c) {
-    return !isOff_(c.Active) && String(c.Code).trim() !== "";
+    // Your own Coach schedule isn't a client, so it stays out of the summary.
+    return !isOff_(c.Active) && String(c.Code).trim() !== "" && !/\bcoach\b/i.test(String(c.Type || ""));
   });
   var plan = {};
   try { weeksLeftRows_(ss).forEach(function (r) { plan[r.code] = r; }); } catch (err) { /* summary still useful */ }

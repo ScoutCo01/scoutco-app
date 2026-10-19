@@ -145,6 +145,14 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 }
 .ex-log input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ex-last { font-size: 13px; color: var(--muted); }
+.coach-notes { display: block; }
+.coach-notes label { display: block; margin-bottom: 6px; }
+.coach-notes textarea {
+  width: 100%; resize: vertical; min-height: 72px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 16px;
+}
+.coach-notes textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.coach-notes .ex-last { margin-top: 6px; white-space: pre-wrap; }
 .ex-last b { color: var(--text); font-weight: 600; }
 .day-foot { padding: 10px 16px 14px; border-top: 1px solid var(--border); text-align: right; }
 .empty { text-align: center; color: var(--muted); padding: 40px 0; }

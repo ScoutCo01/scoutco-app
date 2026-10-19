@@ -147,7 +147,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -242,6 +242,13 @@
     save(KEY_TICKS, t);
   }
 
+  // A Clients row with Type "Coach" is the coach's own schedule: each row is a client,
+  // the box under it holds session notes, and there's no "comments for your coach" box.
+  function isCoach() {
+    var c = (state.data && state.data.client) || {};
+    return /\bcoach\b/i.test(String(c.type || ""));
+  }
+
   // ---------- weights used ----------
   // Saved on the phone as { "<code>|<block>|<week>|<session>|<n>": { w: "40 kg", ex: "back squat", wk: "Week 2", at: ms } }
   function getWeights() { return load(KEY_WEIGHTS, {}); }
@@ -257,7 +264,7 @@
     if (!server || !state.code) return;
     var all = getWeights(), changed = false;
     var waiting = {};
-    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "weight") waiting[x.key] = true; });
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "weight" || x.type === "note") waiting[x.key] = true; });
     Object.keys(server).forEach(function (rest) {
       var k = state.code + "|" + rest, sv = server[rest], mine = all[k];
       if (waiting[rest] || !sv) return; // not saved to the sheet yet: the phone's value is newer
@@ -370,7 +377,7 @@
       return '<article class="day' + (open ? " open" : "") + '" data-day="' + esc(dayKey) + '">' +
         '<button class="day-head" aria-expanded="' + open + '">' +
           '<div><div class="day-title">' + esc(day.name) + '</div>' +
-          '<div class="day-meta">' + total + " exercise" + (total === 1 ? "" : "s") + "</div></div>" +
+          '<div class="day-meta">' + total + (isCoach() ? " client" : " exercise") + (total === 1 ? "" : "s") + "</div></div>" +
           '<div style="display:flex;align-items:center;gap:10px">' +
             '<span class="day-progress' + (done === total && total ? " complete" : "") + '">' +
               (done === total && total ? "Done ✓" : done + "/" + total) + "</span>" +
@@ -379,7 +386,7 @@
         "</button>" +
         '<div class="day-body">' + items +
           (done ? '<div class="day-foot"><button class="btn small ghost" data-clear="' + esc(dayKey) + '">Clear ticks</button></div>' : "") +
-          commentHtml(dayKey) +
+          (isCoach() ? "" : commentHtml(dayKey)) +
         "</div>" +
       "</article>";
     }).join("");
@@ -435,6 +442,14 @@
     var value = state.weightDrafts[key] != null ? state.weightDrafts[key] : (saved ? saved.w : "");
     var prev = lastTime(key, ex.name, weights);
     var id = "w-" + key;
+    if (isCoach()) {
+      return '<div class="ex-log coach-notes">' +
+        '<label for="' + esc(id) + '">Session notes</label>' +
+        '<textarea id="' + esc(id) + '" data-weight="' + esc(key) + '" rows="3" maxlength="2000" ' +
+          'placeholder="How did the session go?">' + esc(value) + "</textarea>" +
+        (prev ? '<div class="ex-last">Last session' + (prev.wk ? " (" + esc(prev.wk) + ")" : "") + ": " + esc(prev.w) + "</div>" : "") +
+      "</div>";
+    }
     return '<div class="ex-log">' +
       '<label for="' + esc(id) + '">Weight used</label>' +
       '<input id="' + esc(id) + '" data-weight="' + esc(key) + '" type="text" maxlength="40" autocomplete="off" ' +
@@ -527,17 +542,17 @@
     if (k) saveWeight(k, e.target.value);
   });
   $("days").addEventListener("keydown", function (e) {
-    if (e.key === "Enter" && e.target.getAttribute && e.target.getAttribute("data-weight") != null) e.target.blur();
+    if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.getAttribute("data-weight") != null) e.target.blur();
   });
 
   function saveWeight(k, value) {
-    var w = String(value || "").trim().slice(0, 40);
+    var w = String(value || "").trim().slice(0, isCoach() ? 2000 : 40);
     delete state.weightDrafts[k];
     var old = getWeights()[k];
     if ((old ? old.w : "") === w) return;
     var i = state.info[k] || {};
     setWeight(k, w, i.name, i.week);
-    if (i.key) queue({ type: "weight", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.name, weight: w });
+    if (i.key) queue({ type: isCoach() ? "note" : "weight", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.name, weight: w });
     var input = document.querySelector('[data-weight="' + CSS.escape(k) + '"]');
     if (input) keepOpen(input);
     // Wait a moment so that if they tapped straight into the next box, it keeps the cursor.
