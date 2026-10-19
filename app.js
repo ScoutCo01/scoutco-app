@@ -701,9 +701,31 @@
 
   flush();
 
+  // ---------- app updates ----------
+  // A home-screen app can sit open for days, so check for a new version each time it comes
+  // back to the front, and reload into it once nobody is typing.
   if ("serviceWorker" in navigator) {
+    var hadController = !!navigator.serviceWorker.controller;
+    var updateReady = false;
+    var reloadIfIdle = function () {
+      var el = document.activeElement;
+      var typing = el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT");
+      if (updateReady && !typing) location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!hadController) { hadController = true; return; } // first install, nothing to update
+      updateReady = true;
+      if (document.visibilityState === "hidden") return; // reload when they come back
+      reloadIfIdle();
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState !== "visible") return;
+      reloadIfIdle();
+      navigator.serviceWorker.getRegistration().then(function (r) { if (r) r.update(); }).catch(function () {});
+    });
+    document.addEventListener("focusout", function () { setTimeout(reloadIfIdle, 500); });
     window.addEventListener("load", function () {
-      navigator.serviceWorker.register("sw.js").catch(function () { /* app still works online */ });
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(function () { /* app still works online */ });
     });
   }
 })();

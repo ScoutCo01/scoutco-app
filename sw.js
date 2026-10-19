@@ -1,6 +1,6 @@
 // Keeps the app working offline. Bump VERSION whenever app files change
 // so phones pick up the new version.
-var VERSION = "scoutco-v8";
+var VERSION = "scoutco-v9";
 var FILES = [
   "./",
   "index.html",
@@ -36,7 +36,8 @@ self.addEventListener("fetch", function (event) {
 
   // Network first, so updates show up straight away; fall back to the saved copy offline.
   event.respondWith(
-    fetch(req).then(function (res) {
+    // no-cache: always ask GitHub for the latest file, never the browser's stale copy.
+    fetch(req.url, { cache: "no-cache", credentials: "same-origin" }).then(function (res) {
       if (res && res.ok) {
         var copy = res.clone();
         caches.open(VERSION).then(function (c) { c.put(req, copy); });
