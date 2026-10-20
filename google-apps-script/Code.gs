@@ -12,6 +12,8 @@
  *   Feedback: filled in by the app when clients send session comments (you also get an email)
  *   Weights:  filled in by the app when clients type the weight they used on an exercise
  *   Session notes: filled in by the app when you (Clients Type "Coach") write notes after each client
+ *   Check-ins: online clients' weekly pulse check. Type your reply in "Reply from Kirst" and it shows in their app
+ *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
  * Monday summary email: ScoutCo menu → "Turn on Monday email" (see sendWeeklySummary below).
@@ -31,6 +33,11 @@ var NOTE_HEADERS = ["Updated", "Coach", "Block", "Week", "Day", "Client", "Notes
 var PROGRESS_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exercise", "Done", "Key"];
 var FEEDBACK_HEADERS = ["Received", "Client", "Block", "Week", "Session", "Comment", "ID"];
 var BLOCK_HEADERS = ["Program", "Block", "Start date"];
+var CHECKINS_TAB = "Check-ins";
+var CHECKIN_HEADERS = ["Updated", "Week of", "Client", "Sleep", "Nutrition", "Energy", "Soreness", "Head noise", "Bodyweight", "Note for Kirst", "Reply from Kirst", "Key"];
+var CHECKIN_SCORES = [["sleep", "Sleep"], ["nutrition", "Nutrition"], ["energy", "Energy"], ["soreness", "Soreness"], ["head", "Head noise"]];
+var SETTINGS_TAB = "Settings";
+var BOOKING_SETTING = "Check-in call booking link";
 
 var CLIENT_HEADERS = ["Code", "Name", "Program", "Active", "Message"];
 var PROGRAM_HEADERS = ["Program", "Block", "Week", "Day", "Order", "Exercise", "Sets", "Reps", "Load", "Tempo", "Rest", "Notes", "Video"];
@@ -47,7 +54,7 @@ function doGet(e) {
     if (normalise_(clients[i].Code) === code) { client = clients[i]; break; }
   }
   if (!client || isOff_(client.Active)) {
-    return json_({ error: "That code wasn't recognised. Check it with your coach." });
+    return json_({ error: "That code wasn't recognised. Check it with Kirst." });
   }
 
   try { recordOpen_(ss, code); } catch (err) { /* the program still loads */ }
@@ -61,6 +68,9 @@ function doGet(e) {
     client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
     program: { name: programName, blocks: addStartDates_(ss, programName, groupBlocks_(rows)) },
     weights: weightsFor_(ss, code),
+    ticks: ticksFor_(ss, code),
+    checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
+    settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
     updated: new Date().toISOString()
   });
 }
@@ -84,6 +94,46 @@ function weightsFor_(ss, code) {
     });
   });
   return out;
+}
+
+/** Every exercise this client has ticked, with when: { "<block>|<week>|<session>|<n>": ms }. */
+function ticksFor_(ss, code) {
+  var out = {}, prefix = code + "|";
+  rowsOf_(ss, PROGRESS_TAB, 8).forEach(function (r) {
+    var key = String(r[7]);
+    if (key.indexOf(prefix) !== 0 || r[6] !== "✓") return;
+    out[key.slice(prefix.length)] = r[0] instanceof Date ? r[0].getTime() : 1;
+  });
+  return out;
+}
+
+/** This client's weekly check-ins (newest first), including your replies. */
+function checkinsFor_(ss, code) {
+  var tz = ss.getSpreadsheetTimeZone(), prefix = code + "|", out = [];
+  rowsOf_(ss, CHECKINS_TAB, CHECKIN_HEADERS.length).forEach(function (r) {
+    var key = String(r[11]);
+    if (key.indexOf(prefix) !== 0) return;
+    var c = { week: key.slice(prefix.length), bw: text_(r[8]).replace(/^'/, ""), note: text_(r[9]), reply: text_(r[10]),
+      at: r[0] instanceof Date ? r[0].getTime() : 0 };
+    CHECKIN_SCORES.forEach(function (s, i) { c[s[0]] = score_(r[3 + i]); });
+    out.push(c);
+  });
+  out.sort(function (a, b) { return a.week < b.week ? 1 : -1; });
+  return out.slice(0, 26);
+}
+
+function score_(v) { var n = parseInt(v, 10); return n >= 1 && n <= 3 ? n : ""; }
+function isOnline_(type) { return /online/i.test(String(type || "")) && !/\bcoach\b/i.test(String(type || "")); }
+
+/** A value from the Settings tab (Setting | Value), or "" if it isn't there. */
+function setting_(ss, name) {
+  var sheet = ss.getSheetByName(SETTINGS_TAB);
+  if (!sheet || sheet.getLastRow() < 1) return "";
+  var vals = sheet.getRange(1, 1, sheet.getLastRow(), 2).getDisplayValues();
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][0]).trim().toLowerCase() === name.toLowerCase()) return String(vals[i][1]).trim();
+  }
+  return "";
 }
 
 /** Puts the time a client opened the app in a "Last opened" column on the Clients tab. */
@@ -121,13 +171,13 @@ function doPost(e) {
   if (!client) return json_({ error: "That code wasn't recognised." });
 
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [];
+  var done = [], comments = [], checkins = [];
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
     var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
     var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
-    var weights = null, wKeys = null, notes = null, nKeys = null;
+    var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null;
     var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var name = String(client.Name || client.Code);
@@ -171,6 +221,27 @@ function doPost(e) {
           notes.appendRow(nRow);
           nKeys.push(nKey);
         }
+      } else if (ev.type === "checkin") {
+        var weekOf = String(ev.weekOf || "");
+        if (/^\d{4}-\d{2}-\d{2}$/.test(weekOf)) {
+          if (!cis) {
+            cis = tab_(ss, CHECKINS_TAB, CHECKIN_HEADERS);
+            cKeys = cis.getRange(1, 12, Math.max(cis.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+          }
+          var cKey = normalise_(client.Code) + "|" + weekOf;
+          var scores = CHECKIN_SCORES.map(function (s) { return score_(ev[s[0]]); });
+          var cRow = [new Date(), Utilities.parseDate(weekOf, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd"), cell_(name)]
+            .concat(scores, [asText_(clip_(ev.bw, 20).trim()), cell_(clip_(ev.note, 2000).trim())]);
+          var cAt = cKeys.indexOf(cKey);
+          // Columns A to J only, so a reply you've already typed (column K) is kept.
+          if (cAt > 0) {
+            cis.getRange(cAt + 1, 1, 1, cRow.length).setValues([cRow]);
+          } else {
+            cis.appendRow(cRow.concat(["", cKey]));
+            cKeys.push(cKey);
+          }
+          checkins.push({ week: weekOf, scores: scores, bw: clip_(ev.bw, 20).trim(), note: clip_(ev.note, 2000).trim(), updated: cAt > 0 });
+        }
       } else if (ev.type === "comment") {
         var text = clip_(ev.text, 2000).trim();
         if (text && fbIds.indexOf(String(ev.id)) === -1) {
@@ -186,6 +257,7 @@ function doPost(e) {
   }
 
   if (comments.length) notify_(ss, client, comments);
+  if (checkins.length) notifyCheckin_(ss, client, checkins);
   return json_({ ok: true, saved: done });
 }
 
@@ -200,6 +272,22 @@ function notify_(ss, client, comments) {
     MailApp.sendEmail(to, "ScoutCo: comment from " + (client.Name || "a client"),
       lines.join("\n\n") + "\n\nAll comments are on the Feedback tab:\n" + ss.getUrl());
   } catch (err) { /* email is a bonus; the comment is already saved */ }
+}
+
+/** Emails you when an online client sends their weekly check-in. */
+function notifyCheckin_(ss, client, checkins) {
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (!to) return;
+    var lines = checkins.map(function (c) {
+      return (c.updated ? "Updated check-in" : "Check-in") + " for the week of " + c.week.split("-").reverse().join("/") + "\n" +
+        CHECKIN_SCORES.map(function (s, i) { return s[1] + ": " + (c.scores[i] || "-"); }).join("  |  ") +
+        (c.bw ? "\nBodyweight: " + c.bw : "") + (c.note ? "\n\nNote: " + c.note : "");
+    });
+    MailApp.sendEmail(to, "ScoutCo: check-in from " + (client.Name || "a client"),
+      lines.join("\n\n") + "\n\n(1 = bad, 2 = OK, 3 = good)\n\nTo reply, type in the \"Reply from Kirst\" column on the Check-ins tab. " +
+      "It shows in their app next time they open it:\n" + ss.getUrl());
+  } catch (err) { /* email is a bonus; the check-in is already saved */ }
 }
 
 function findClient_(ss, code) {
@@ -345,6 +433,7 @@ function onOpen() {
     .addItem("Set up tabs", "setupSheets")
     .addItem("Add a new client", "addClient")
     .addItem("Update weeks left", "updateWeeksLeft")
+    .addItem("Set up online clients", "setupOnline")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -357,10 +446,12 @@ function onOpen() {
 /** Shows the dates on Progress and Feedback as dd/mm/yyyy (new rows pick this up too). */
 function formatDates_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  [PROGRESS_TAB, FEEDBACK_TAB, WEIGHTS_TAB].forEach(function (name) {
+  [PROGRESS_TAB, FEEDBACK_TAB, WEIGHTS_TAB, CHECKINS_TAB].forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (sheet) sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy");
   });
+  var ci = ss.getSheetByName(CHECKINS_TAB);
+  if (ci) ci.getRange("B2:B").setNumberFormat("dd/mm/yyyy");
 }
 
 /* ------------------------------------------------------------------ */
@@ -571,7 +662,7 @@ function sendSummary_() {
 
   var stats = {};
   clients.forEach(function (c) {
-    stats[normalise_(c.Code)] = { sessions: {}, ticks: 0, lastTick: null, weights: [], comments: 0 };
+    stats[normalise_(c.Code)] = { sessions: {}, ticks: 0, lastTick: null, weights: [], comments: 0, checkin: null };
   });
   var codeOf = function (key) { return normalise_(String(key).split("|")[0]); };
 
@@ -593,69 +684,113 @@ function sendSummary_() {
     if (st && r[0] instanceof Date && r[0] >= since) st.comments++;
   });
 
-  var quiet = [], rebook = [], setup = [], table = [];
+  // Online clients' check-ins from the last 7 days (the latest one per client).
+  rowsOf_(ss, CHECKINS_TAB, CHECKIN_HEADERS.length).forEach(function (r) {
+    var st = stats[codeOf(r[11])];
+    if (!st || !(r[0] instanceof Date) || r[0] < since) return;
+    if (!st.checkin || r[0] > st.checkin.at) {
+      st.checkin = { at: r[0], scores: CHECKIN_SCORES.map(function (s, i) { return score_(r[3 + i]); }),
+        bw: text_(r[8]).replace(/^'/, ""), note: text_(r[9]), reply: text_(r[10]) };
+    }
+  });
+
+  // Face to face and online clients each get their own section.
+  var groups = [
+    { title: "Face to face clients", online: false, quiet: [], rebook: [], setup: [], table: [] },
+    { title: "Online clients", online: true, quiet: [], rebook: [], setup: [], table: [], noCheckin: [], reply: [], low: [] }
+  ];
   clients.forEach(function (c) {
     var code = normalise_(c.Code), st = stats[code], p = plan[code] || {};
+    var g = groups[isOnline_(c.Type) ? 1 : 0];
     var name = String(c.Name || c.Code).trim();
     var sessions = Object.keys(st.sessions).length;
     var opened = String(c["Last opened"] || "").trim();
     if (!sessions && !p.notStarted && p.left !== 0) {
-      quiet.push(name + ": " + (st.lastTick ? "last ticked a session " + fmt(st.lastTick) : "hasn't ticked anything yet") +
+      g.quiet.push(name + ": " + (st.lastTick ? "last ticked a session " + fmt(st.lastTick) : "hasn't ticked anything yet") +
         (opened ? ", last opened the app " + opened : ", hasn't opened the app yet"));
     }
-    if (p.left === 0) rebook.push(name + ": program has run out");
-    else if (p.left > 0 && p.left <= 2) rebook.push(name + ": " + p.left + " week" + (p.left === 1 ? "" : "s") + " left (last week ends " + fmt(p.lastDay) + ")");
-    if (p.left != null && p.left < 0) setup.push(name + ": " + p.cells[5]);
+    if (p.left === 0) g.rebook.push(name + ": program has run out");
+    else if (p.left > 0 && p.left <= 2) g.rebook.push(name + ": " + p.left + " week" + (p.left === 1 ? "" : "s") + " left (last week ends " + fmt(p.lastDay) + ")");
+    if (p.left != null && p.left < 0) g.setup.push(name + ": " + p.cells[5]);
     st.weights.sort(function (a, b) { return a.at - b.at; });
     var seen = {}, lifts = [];
     st.weights.forEach(function (x) { seen[x.ex.toLowerCase()] = x; });
     Object.keys(seen).forEach(function (k) { lifts.push(seen[k].ex + " " + seen[k].w); });
-    table.push({ name: name, now: [p.now, p.week].filter(Boolean).join(", "), sessions: sessions, ticks: st.ticks,
-      comments: st.comments, lifts: lifts, opened: opened || "Not yet" });
+    var ci = st.checkin, pulse = "";
+    if (g.online) {
+      if (!ci) {
+        g.noCheckin.push(name);
+      } else {
+        pulse = CHECKIN_SCORES.map(function (s, i) { return s[1] + " " + (ci.scores[i] || "-"); }).join(", ") + (ci.bw ? ", " + ci.bw : "");
+        if (!ci.reply) g.reply.push(name + (ci.note ? ': "' + clip_(ci.note, 200) + '"' : ": no note, scores only"));
+        var lows = CHECKIN_SCORES.filter(function (s, i) { return ci.scores[i] === 1; }).map(function (s) { return s[1]; });
+        if (lows.length) g.low.push(name + ": " + lows.join(", "));
+      }
+    }
+    g.table.push({ name: name, now: [p.now, p.week].filter(Boolean).join(", "), sessions: sessions, ticks: st.ticks,
+      comments: st.comments, lifts: lifts, opened: opened || "Not yet", pulse: pulse || (g.online ? "No check-in" : "") });
   });
-  table.sort(function (a, b) { return a.sessions - b.sessions || a.name.localeCompare(b.name); });
+  groups = groups.filter(function (g) { return g.table.length; });
+  groups.forEach(function (g) { g.table.sort(function (a, b) { return a.sessions - b.sessions || a.name.localeCompare(b.name); }); });
 
+  var count = function (k) { return groups.reduce(function (n, g) { return n + (g[k] ? g[k].length : 0); }, 0); };
   var to = Session.getEffectiveUser().getEmail();
   if (!to) return "";
   var subject = "ScoutCo weekly summary, " + fmt(now) +
-    (quiet.length ? " · " + quiet.length + " to check in with" : "") +
-    (rebook.length ? " · " + rebook.length + " to rebook" : "");
+    (count("quiet") ? " · " + count("quiet") + " to check in with" : "") +
+    (count("rebook") ? " · " + count("rebook") + " to rebook" : "") +
+    (count("reply") ? " · " + count("reply") + " check-in" + (count("reply") === 1 ? "" : "s") + " to reply to" : "");
 
   var h = function (t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
   var list = function (title, why, items, colour) {
-    if (!items.length) return "";
-    return '<h3 style="margin:22px 0 4px;color:' + colour + '">' + h(title) + "</h3>" +
+    if (!items || !items.length) return "";
+    return '<h3 style="margin:18px 0 4px;color:' + colour + '">' + h(title) + "</h3>" +
       '<div style="color:#6b7280;margin-bottom:6px">' + h(why) + "</div><ul style=\"margin:0;padding-left:20px\">" +
       items.map(function (i) { return "<li style=\"margin:3px 0\">" + h(i) + "</li>"; }).join("") + "</ul>";
   };
   var cell = 'style="padding:6px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top"';
-  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#111827;max-width:720px">' +
+  var section = function (g) {
+    var heads = ["Client", "Now on", "Sessions", "Exercises ticked", "Comments", "Weights logged"].concat(g.online ? ["Check-in (1 bad, 3 good)"] : [], ["Last opened app"]);
+    var empty = !g.quiet.length && !g.rebook.length && !g.setup.length && !(g.reply || []).length && !(g.noCheckin || []).length && !(g.low || []).length;
+    return '<h2 style="margin:30px 0 4px;padding-bottom:6px;border-bottom:2px solid #8b5cf6">' + h(g.title) + " (" + g.table.length + ")</h2>" +
+      list("Check in with", "No sessions ticked in the last 7 days.", g.quiet, "#b91c1c") +
+      list("Low scores on their check-in", "Scored 1 (bad) on these.", g.low, "#b91c1c") +
+      list("Check-ins waiting for your reply", "Type your reply on the Check-ins tab and it shows in their app.", g.reply, "#7c3aed") +
+      list("No check-in this week", "Haven't sent their weekly pulse check in the last 7 days.", g.noCheckin, "#b45309") +
+      list("Book their next block", "2 weeks or less left in their written program.", g.rebook, "#b45309") +
+      list("Needs setting up", "The app can't work out their program yet.", g.setup, "#6b7280") +
+      (empty ? "<p><b>Everyone trained" + (g.online ? ", checked in" : "") + " and nobody is running out. Nice!</b></p>" : "") +
+      '<h3 style="margin:18px 0 6px">Last 7 days</h3>' +
+      '<table style="border-collapse:collapse;width:100%;font-size:13px"><tr style="background:#ede9fe;text-align:left">' +
+      heads.map(function (t) { return "<th " + cell + ">" + h(t) + "</th>"; }).join("") + "</tr>" +
+      g.table.map(function (r) {
+        return "<tr>" + [r.name, r.now, r.sessions, r.ticks, r.comments, r.lifts.join(", ") || ""].concat(g.online ? [r.pulse] : [], [r.opened]).map(function (v) {
+          return "<td " + cell + ">" + h(v) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") + "</table>";
+  };
+  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#111827;max-width:760px">' +
     "<p>Here's how your clients went from " + h(fmt(since)) + " to " + h(fmt(now)) + ".</p>" +
-    list("Check in with", "No sessions ticked in the last 7 days.", quiet, "#b91c1c") +
-    list("Book their next block", "2 weeks or less left in their written program.", rebook, "#b45309") +
-    list("Needs setting up", "The app can't work out their program yet.", setup, "#6b7280") +
-    (quiet.length || rebook.length || setup.length ? "" : "<p><b>Everyone trained and nobody is running out. Nice!</b></p>") +
-    '<h3 style="margin:22px 0 6px">Last 7 days</h3>' +
-    '<table style="border-collapse:collapse;width:100%;font-size:13px"><tr style="background:#ede9fe;text-align:left">' +
-    ["Client", "Now on", "Sessions", "Exercises ticked", "Comments", "Weights logged", "Last opened app"].map(function (t) {
-      return "<th " + cell + ">" + t + "</th>";
-    }).join("") + "</tr>" +
-    table.map(function (r) {
-      return "<tr>" + [r.name, r.now, r.sessions, r.ticks, r.comments, r.lifts.join(", ") || "", r.opened].map(function (v) {
-        return "<td " + cell + ">" + h(v) + "</td>";
-      }).join("") + "</tr>";
-    }).join("") + "</table>" +
-    '<p style="margin-top:18px"><a href="' + h(ss.getUrl()) + '">Open the ScoutCo sheet</a> for every tick, comment and weight.</p>' +
-    '<p style="color:#9ca3af;font-size:12px">Sent every Monday. To stop it: ScoutCo menu → Turn off Monday email.</p></div>';
+    groups.map(section).join("") +
+    '<p style="margin-top:22px"><a href="' + h(ss.getUrl()) + '">Open the ScoutCo sheet</a> for every tick, comment, weight and check-in.</p>' +
+    '<p style="color:#9ca3af;font-size:12px">Clients whose Type on the Clients tab says "Online" are in the online section. ' +
+    "Sent every Monday. To stop it: ScoutCo menu → Turn off Monday email.</p></div>";
 
+  var block = function (title, items) { return items && items.length ? title + "\n- " + items.join("\n- ") + "\n\n" : ""; };
   var text = "ScoutCo weekly summary, " + fmt(since) + " to " + fmt(now) + "\n\n" +
-    (quiet.length ? "CHECK IN WITH (no sessions in 7 days)\n- " + quiet.join("\n- ") + "\n\n" : "") +
-    (rebook.length ? "BOOK THEIR NEXT BLOCK (2 weeks or less left)\n- " + rebook.join("\n- ") + "\n\n" : "") +
-    (setup.length ? "NEEDS SETTING UP\n- " + setup.join("\n- ") + "\n\n" : "") +
-    "LAST 7 DAYS\n" + table.map(function (r) {
-      return "- " + r.name + ": " + plural_(r.sessions, "session") + ", " + plural_(r.ticks, "exercise") + ", " + plural_(r.comments, "comment") +
-        (r.lifts.length ? ". Weights: " + r.lifts.join(", ") : "");
-    }).join("\n") + "\n\n" + ss.getUrl();
+    groups.map(function (g) {
+      return "===== " + g.title.toUpperCase() + " (" + g.table.length + ") =====\n\n" +
+        block("CHECK IN WITH (no sessions in 7 days)", g.quiet) +
+        block("LOW SCORES ON THEIR CHECK-IN", g.low) +
+        block("CHECK-INS WAITING FOR YOUR REPLY", g.reply) +
+        block("NO CHECK-IN THIS WEEK", g.noCheckin) +
+        block("BOOK THEIR NEXT BLOCK (2 weeks or less left)", g.rebook) +
+        block("NEEDS SETTING UP", g.setup) +
+        "LAST 7 DAYS\n" + g.table.map(function (r) {
+          return "- " + r.name + ": " + plural_(r.sessions, "session") + ", " + plural_(r.ticks, "exercise") + ", " + plural_(r.comments, "comment") +
+            (r.lifts.length ? ". Weights: " + r.lifts.join(", ") : "") + (g.online ? ". Check-in: " + r.pulse : "");
+        }).join("\n") + "\n\n";
+    }).join("") + ss.getUrl();
 
   MailApp.sendEmail({ to: to, subject: subject, body: text, htmlBody: html });
   return to;
@@ -706,12 +841,49 @@ function setupSheets() {
   tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS).setColumnWidth(6, 220);
   tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS).setColumnWidth(6, 420);
   tab_(ss, WEIGHTS_TAB, WEIGHT_HEADERS).setColumnWidth(6, 220);
+  setupCheckinsTab_(ss);
+  setupSettingsTab_(ss);
 
   var first = ss.getSheets()[0];
   if (first.getName() !== CLIENTS_TAB && first.getName() !== PROGRAMS_TAB && first.getLastRow() === 0) {
     ss.deleteSheet(first);
   }
   SpreadsheetApp.getUi().alert("Done! Your tabs are ready.");
+}
+
+/** The Check-ins tab, with the reply column highlighted so it's easy to spot. */
+function setupCheckinsTab_(ss) {
+  var sheet = tab_(ss, CHECKINS_TAB, CHECKIN_HEADERS);
+  sheet.getRange("B2:B").setNumberFormat("dd/mm/yyyy");
+  sheet.setColumnWidth(10, 320);
+  sheet.setColumnWidth(11, 320);
+  sheet.getRange(1, 11).setBackground("#bbf7d0");
+  return sheet;
+}
+
+/** The Settings tab: one setting per row (Setting | Value). */
+function setupSettingsTab_(ss) {
+  var sheet = ss.getSheetByName(SETTINGS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(SETTINGS_TAB);
+    sheet.appendRow(["Setting", "Value"]);
+    styleHeader_(sheet, 2);
+    sheet.setColumnWidth(1, 240);
+    sheet.setColumnWidth(2, 480);
+  }
+  var names = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
+  if (names.indexOf(BOOKING_SETTING.toLowerCase()) === -1) sheet.appendRow([BOOKING_SETTING, ""]);
+  return sheet;
+}
+
+/** ScoutCo menu → Set up online clients: adds the Check-ins and Settings tabs. */
+function setupOnline() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  setupCheckinsTab_(ss);
+  ss.setActiveSheet(setupSettingsTab_(ss));
+  SpreadsheetApp.getUi().alert("Done! Paste your Squarespace booking link for the Online Coaching Call Check In next to \"" +
+    BOOKING_SETTING + "\" on the Settings tab.\n\nOnline clients' check-ins will land on the Check-ins tab. " +
+    "Type your reply in the green \"Reply from Kirst\" column.");
 }
 
 /** Asks for a name, then adds a client row with a fresh private code. */

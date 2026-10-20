@@ -36,7 +36,7 @@
       <div class="login-card">
         <img src="icons/logo-full-white.png" alt="ScoutCo · Sports massage, personal training, mindset coaching" class="login-logo" width="320" height="86">
         <h1>Your training program</h1>
-        <p class="muted">Enter the personal code your coach gave you.</p>
+        <p class="muted">Enter the personal code Kirst gave you.</p>
         <form id="loginForm" autocomplete="off">
           <label for="codeInput" class="sr-only">Your code</label>
           <input id="codeInput" name="code" inputmode="text" autocapitalize="characters" spellcheck="false" placeholder="e.g. SC-7Q4K9X" required>
@@ -53,12 +53,19 @@
         <p class="muted small" id="updatedAt"></p>
       </div>
       <div class="notice hidden" id="offlineNotice">You're offline, so this is your last saved copy.</div>
-      <div class="sessions hidden" id="sessionsCard"></div>
-      <div class="coach-note hidden" id="coachNote"></div>
-      <nav class="weeks" id="blockTabs" aria-label="Blocks"></nav>
-      <nav class="weeks" id="weekTabs" aria-label="Weeks"></nav>
-      <div id="days"></div>
-      <p class="empty hidden" id="emptyState">Your coach hasn't added a program yet. Check back soon.</p>
+      <nav class="view-tabs hidden" id="viewTabs" aria-label="Sections"></nav>
+      <div id="programPane">
+        <div class="coach-note reply-note hidden" id="replyNote"></div>
+        <div class="book-call hidden" id="bookCall"></div>
+        <div class="sessions hidden" id="sessionsCard"></div>
+        <div class="coach-note hidden" id="coachNote"></div>
+        <nav class="weeks" id="blockTabs" aria-label="Blocks"></nav>
+        <nav class="weeks" id="weekTabs" aria-label="Weeks"></nav>
+        <div id="days"></div>
+        <p class="empty hidden" id="emptyState">Kirst hasn't added a program yet. Check back soon.</p>
+      </div>
+      <div id="checkinPane" class="hidden"></div>
+      <div id="progressPane" class="hidden"></div>
     </section>
 
     <section id="loadingView" class="view">

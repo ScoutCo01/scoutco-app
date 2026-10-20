@@ -10,10 +10,17 @@
   var KEY_COMMENTS = "scoutco.comments";
   var KEY_TICKS = "scoutco.ticks";
   var KEY_WEIGHTS = "scoutco.weights";
+  var KEY_CHECKINS = "scoutco.checkins";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
+  var COACH = String(CONFIG.coachName || "Kirst");
+
   var $ = function (id) { return document.getElementById(id); };
-  var state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {} };
+  function freshState() {
+    return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
+      view: "program", ci: null, liftPick: null };
+  }
+  var state = freshState();
 
   // ---------- storage helpers (never let storage errors break the app) ----------
   function load(key, fallback) {
@@ -111,6 +118,9 @@
   function setData(data, offline) {
     state.data = data;
     mergeWeights(data && data.weights);
+    mergeTicks(data && data.ticks);
+    mergeCheckins(data && data.checkins);
+    if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
     var blocks = getBlocks(data);
     // On a new day, go back to the current week (the coach's dates win over the last tab tapped).
@@ -131,7 +141,7 @@
 
   function signOut(message) {
     remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX);
-    state = { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {} };
+    state = freshState();
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
     $("loginError").classList.toggle("hidden", !message);
@@ -147,7 +157,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -238,8 +248,21 @@
   function getTicks() { return load(KEY_TICKS, {}); }
   function setTick(key, on) {
     var t = getTicks();
-    if (on) t[key] = 1; else delete t[key];
+    if (on) t[key] = Date.now(); else delete t[key]; // the time it was ticked, for the progress screen
     save(KEY_TICKS, t);
+  }
+  // The sheet sends back every exercise this client has ticked (with the time), so progress
+  // follows them to a new phone and older ticks get a date.
+  function mergeTicks(server) {
+    if (!server || !state.code) return;
+    var t = getTicks(), changed = false, waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "tick") waiting[x.key] = true; });
+    Object.keys(server).forEach(function (rest) {
+      if (waiting[rest]) return;
+      var k = state.code + "|" + rest, at = +server[rest] || 1;
+      if (!t[k] || (t[k] === 1 && at > 1)) { t[k] = at; changed = true; }
+    });
+    if (changed) save(KEY_TICKS, t);
   }
 
   // A Clients row with Type "Coach" is the coach's own schedule: each row is a client,
@@ -288,12 +311,329 @@
     return best;
   }
 
+  // ---------- online clients ----------
+  // Clients whose Type mentions "online" get the weekly check-in and the book-a-call button.
+  function isOnline() {
+    var c = (state.data && state.data.client) || {};
+    return /online/i.test(String(c.type || ""));
+  }
+  function bookingUrl() { return safeUrl(((state.data && state.data.settings) || {}).bookingUrl); }
+
+  // ---------- weeks on the calendar (Monday to Sunday) ----------
+  function mondayOf(d) { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return addDays(x, -((x.getDay() + 6) % 7)); }
+  function isoDay(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function thisWeekOf() { return isoDay(mondayOf(new Date())); }
+
+  // ---------- weekly pulse check ----------
+  var SCORES = [
+    { id: "sleep", name: "Sleep" },
+    { id: "nutrition", name: "Nutrition" },
+    { id: "energy", name: "Energy" },
+    { id: "soreness", name: "Soreness", hint: "3 = not sore" },
+    { id: "head", name: "Head noise", hint: "anxiety and stress, 3 = calm" }
+  ];
+  var SCORE_WORDS = { 1: "Bad", 2: "OK", 3: "Good" };
+  // Saved on the phone as { "<code>|<week of yyyy-mm-dd>": { sleep: 1-3, ..., bw, note, reply, at } }
+  function getCheckins() { return load(KEY_CHECKINS, {}); }
+  function myCheckins() {
+    var all = getCheckins(), prefix = state.code + "|", out = [];
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf(prefix) === 0) out.push(Object.assign({ week: k.slice(prefix.length) }, all[k]));
+    });
+    return out.sort(function (a, b) { return a.week < b.week ? 1 : -1; });
+  }
+  function checkinFor(week) { return getCheckins()[state.code + "|" + week] || null; }
+  function mergeCheckins(server) {
+    if (!server || !state.code) return;
+    var all = getCheckins(), waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "checkin") waiting[x.key] = true; });
+    server.forEach(function (c) {
+      if (!c || !c.week) return;
+      var k = state.code + "|" + c.week, mine = all[k];
+      if (waiting[c.week]) { if (mine) mine.reply = c.reply || ""; return; } // keep their newer answers, but show Kirst's reply
+      all[k] = { sleep: c.sleep, nutrition: c.nutrition, energy: c.energy, soreness: c.soreness, head: c.head,
+        bw: c.bw || "", note: c.note || "", reply: c.reply || "", at: c.at || (mine && mine.at) || 0 };
+    });
+    save(KEY_CHECKINS, all);
+  }
+  // The latest reply Kirst typed on the Check-ins tab, if it's from the last 3 weeks.
+  function latestReply() {
+    var cutoff = isoDay(addDays(mondayOf(new Date()), -14));
+    var withReply = myCheckins().filter(function (c) { return c.reply && c.week >= cutoff; });
+    return withReply[0] || null;
+  }
+  function weekLabel(week) { var d = parseDay(week); return d ? "week of " + shortDate(d) : week; }
+
+  function viewList() {
+    if (isCoach()) return [];
+    var v = [["program", "Program"]];
+    if (isOnline()) v.push(["checkin", "Check-in"]);
+    v.push(["progress", "Progress"]);
+    return v;
+  }
+  function renderViewTabs() {
+    var views = viewList();
+    if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
+    var due = isOnline() && !checkinFor(thisWeekOf());
+    $("viewTabs").classList.toggle("hidden", views.length < 2);
+    $("viewTabs").innerHTML = views.map(function (v) {
+      return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
+        esc(v[1]) + (v[0] === "checkin" && due ? '<span class="dot" aria-label="due"></span>' : "") + "</button>";
+    }).join("");
+    $("programPane").classList.toggle("hidden", state.view !== "program");
+    $("checkinPane").classList.toggle("hidden", state.view !== "checkin");
+    $("progressPane").classList.toggle("hidden", state.view !== "progress");
+  }
+
+  function renderReplyNote() {
+    var el = $("replyNote");
+    var r = isOnline() ? latestReply() : null;
+    if (!r) { el.classList.add("hidden"); return; }
+    el.innerHTML = "<strong>Reply from " + esc(COACH) + "</strong>" + esc(r.reply) +
+      '<div class="small muted reply-week">On your check-in for the ' + esc(weekLabel(r.week)) + "</div>";
+    el.classList.remove("hidden");
+  }
+
+  // "Book a check-in call" shows in the second-last week of the block they're in today
+  // (week 3 of a 4-week block), once a booking link is on the Settings tab.
+  function renderBookCall(blocks) {
+    var el = $("bookCall"), url = bookingUrl(), show = false;
+    if (isOnline() && url) {
+      var now = currentByDate(blocks);
+      var b = now && blocks.filter(function (x) { return x.name === now.block; })[0];
+      if (b && b.weeks.length >= 2) {
+        var wi = b.weeks.length - 2;
+        show = b.weeks[wi].name === now.week && isThisWeek(b, wi);
+      }
+    }
+    el.classList.toggle("hidden", !show);
+    if (!show) return;
+    el.innerHTML = "<div><strong>Time for your check-in call</strong>" +
+      "<div>Your block finishes next week. Book a call with " + esc(COACH) + " to go over how it went and plan what's next.</div></div>" +
+      '<a class="btn primary" href="' + esc(url) + '" target="_blank" rel="noopener">Book a check-in call</a>';
+  }
+
+  function renderCheckin() {
+    var week = thisWeekOf();
+    var saved = checkinFor(week);
+    if (!state.ci || state.ci.week !== week) {
+      state.ci = Object.assign({ week: week }, saved || {});
+      state.ci.error = "";
+    }
+    var d = state.ci;
+    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "checkin" && x.key === week; });
+    var rows = SCORES.map(function (sc) {
+      return '<div class="ci-row"><div class="ci-name">' + esc(sc.name) +
+        (sc.hint ? '<small>' + esc(sc.hint) + "</small>" : "") + '</div><div class="ci-scale" role="radiogroup" aria-label="' + esc(sc.name) + '">' +
+        [1, 2, 3].map(function (n) {
+          return '<button type="button" class="ci-btn s' + n + '" role="radio" data-score="' + sc.id + '" data-val="' + n +
+            '" aria-checked="' + (+d[sc.id] === n) + '"><b>' + n + "</b>" + SCORE_WORDS[n] + "</button>";
+        }).join("") + "</div></div>";
+    }).join("");
+    var status = saved ? (pending ? "Sending…" : "Sent ✓ " + new Date(saved.at || Date.now()).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })) : "";
+    var history = myCheckins().filter(function (c) { return c.week !== week; }).slice(0, 8);
+
+    $("checkinPane").innerHTML =
+      '<section class="card ci">' +
+        '<h2>Weekly pulse check</h2>' +
+        '<p class="muted small">This ' + esc(weekLabel(week)) + '. Tap 1 for bad, 2 for OK or 3 for good. ' + esc(COACH) + " reads every one.</p>" +
+        rows +
+        '<label class="ci-label" for="ci-bw">Bodyweight <span class="muted">(optional)</span></label>' +
+        '<input id="ci-bw" class="ci-input" data-ci="bw" type="text" inputmode="decimal" maxlength="20" autocomplete="off" placeholder="e.g. 72.5 kg" value="' + esc(d.bw || "") + '">' +
+        '<label class="ci-label" for="ci-note">Note for ' + esc(COACH) + "</label>" +
+        '<textarea id="ci-note" class="ci-input" data-ci="note" rows="3" maxlength="2000" placeholder="Anything ' + esc(COACH) + ' should know this week?">' + esc(d.note || "") + "</textarea>" +
+        (d.error ? '<p class="error">' + esc(d.error) + "</p>" : "") +
+        '<div class="ci-actions"><span class="small muted">' + esc(status) + "</span>" +
+          '<button class="btn primary" data-ci-send>' + (saved ? "Update check-in" : "Send check-in") + "</button></div>" +
+        (saved && saved.reply ? '<div class="coach-note"><strong>Reply from ' + esc(COACH) + "</strong>" + esc(saved.reply) + "</div>" : "") +
+      "</section>" +
+      (history.length ? '<h3 class="section-title">Earlier check-ins</h3>' + history.map(historyHtml).join("") : "");
+  }
+
+  function historyHtml(c) {
+    return '<div class="card ci-past"><div class="ci-past-head">' + esc(weekLabel(c.week).replace(/^w/, "W")) + "</div>" +
+      '<div class="ci-pills">' + SCORES.map(function (sc) {
+        var v = +c[sc.id];
+        return '<span class="pill s' + (v || 0) + '">' + esc(sc.name) + " " + (v || "–") + "</span>";
+      }).join("") + (c.bw ? '<span class="pill">' + esc(c.bw) + "</span>" : "") + "</div>" +
+      (c.note ? '<div class="ci-past-note">' + esc(c.note) + "</div>" : "") +
+      (c.reply ? '<div class="coach-note"><strong>Reply from ' + esc(COACH) + "</strong>" + esc(c.reply) + "</div>" : "") +
+    "</div>";
+  }
+
+  function sendCheckin() {
+    var d = state.ci;
+    var missing = SCORES.filter(function (sc) { return !(+d[sc.id] >= 1 && +d[sc.id] <= 3); });
+    if (missing.length) {
+      d.error = "Please pick a number for " + missing.map(function (m) { return m.name; }).join(", ") + ".";
+      render();
+      return;
+    }
+    d.error = "";
+    var all = getCheckins(), k = state.code + "|" + d.week, old = all[k] || {};
+    var entry = { bw: String(d.bw || "").trim().slice(0, 20), note: String(d.note || "").trim().slice(0, 2000), reply: old.reply || "", at: Date.now() };
+    SCORES.forEach(function (sc) { entry[sc.id] = +d[sc.id]; });
+    all[k] = entry;
+    save(KEY_CHECKINS, all);
+    var ev = { type: "checkin", key: d.week, weekOf: d.week, bw: entry.bw, note: entry.note };
+    SCORES.forEach(function (sc) { ev[sc.id] = entry[sc.id]; });
+    queue(ev);
+    state.ci = null;
+    render();
+  }
+
+  // ---------- progress screen ----------
+  function blockScope(bName, week, day) { return (bName ? bName + "|" : "") + week + "|" + day; }
+  function numberIn(s) { var m = /(\d+(?:\.\d+)?)/.exec(String(s || "").replace(",", ".")); return m ? parseFloat(m[1]) : null; }
+  function unitIn(s) { var m = /\d\s*(kg|lb|lbs|s|sec|m|km|min)\b/i.exec(String(s || "")); return m ? m[1].toLowerCase() : ""; }
+  function titleCase(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  // Each session with at least one exercise ticked, with the time of its first tick.
+  function trainedSessions() {
+    var t = getTicks(), prefix = state.code + "|", out = {};
+    Object.keys(t).forEach(function (k) {
+      if (k.indexOf(prefix) !== 0 || !t[k]) return;
+      var session = k.slice(prefix.length).replace(/\|[^|]*$/, "");
+      var at = t[k] > 1 ? t[k] : 0;
+      if (!(session in out) || (at && (!out[session] || at < out[session]))) out[session] = at;
+    });
+    return out;
+  }
+
+  function renderProgress(blocks) {
+    var trained = trainedSessions();
+    var DAY = 864e5, thisMon = mondayOf(new Date());
+
+    // Sessions per calendar week, for the streak and the bar chart.
+    var perWeek = {};
+    Object.keys(trained).forEach(function (s) {
+      if (!trained[s]) return;
+      var wk = isoDay(mondayOf(new Date(trained[s])));
+      perWeek[wk] = (perWeek[wk] || 0) + 1;
+    });
+    var streak = 0, start = perWeek[isoDay(thisMon)] ? 0 : 1; // this week only breaks the streak once it's over
+    for (var i = start; perWeek[isoDay(addDays(thisMon, -7 * i))]; i++) streak++;
+    var thisWeek = perWeek[isoDay(thisMon)] || 0;
+
+    // Sessions trained in the block they're on.
+    var now = currentByDate(blocks);
+    var bName = now ? now.block : state.block;
+    var blk = blocks.filter(function (b) { return b.name === bName; })[0] || blocks[0];
+    var total = 0, doneInBlock = 0;
+    if (blk) blk.weeks.forEach(function (w) {
+      w.days.forEach(function (d) { total++; if (blockScope(blk.name, w.name, d.name) in trained) doneInBlock++; });
+    });
+
+    var weeks8 = [];
+    for (var j = 7; j >= 0; j--) {
+      var m = addDays(thisMon, -7 * j);
+      weeks8.push({ label: j === 0 ? "Now" : m.getDate() + "/" + (m.getMonth() + 1), value: perWeek[isoDay(m)] || 0 });
+    }
+
+    // Weights: one line per exercise.
+    var lifts = {}, weights = getWeights(), prefix = state.code + "|";
+    Object.keys(weights).forEach(function (k) {
+      var v = weights[k];
+      if (k.indexOf(prefix) !== 0 || !v || !v.w || !v.ex) return;
+      var n = numberIn(v.w);
+      if (n == null) return;
+      (lifts[v.ex] = lifts[v.ex] || []).push({ x: v.at || 0, y: n, text: v.w, wk: v.wk });
+    });
+    var liftNames = Object.keys(lifts).sort(function (a, b) { return lifts[b].length - lifts[a].length || a.localeCompare(b); });
+    if (liftNames.indexOf(state.liftPick) === -1) state.liftPick = liftNames[0] || null;
+    var liftHtml;
+    if (!liftNames.length) {
+      liftHtml = '<p class="muted small">Type the weight you use in the "Weight used" box under each exercise, and your lifts will chart here.</p>';
+    } else {
+      var pts = lifts[state.liftPick].filter(function (p) { return p.x; }).sort(function (a, b) { return a.x - b.x; });
+      var best = lifts[state.liftPick].reduce(function (a, p) { return !a || p.y > a.y ? p : a; }, null);
+      var latest = pts[pts.length - 1] || lifts[state.liftPick][0];
+      liftHtml = '<select class="lift-pick" data-lift aria-label="Exercise">' + liftNames.map(function (n) {
+          return '<option value="' + esc(n) + '"' + (n === state.liftPick ? " selected" : "") + ">" + esc(titleCase(n)) + "</option>";
+        }).join("") + "</select>" +
+        '<div class="stat-row"><div><b>' + esc(best.text) + '</b><span>Best</span></div><div><b>' + esc(latest.text) + "</b><span>Latest</span></div></div>" +
+        (pts.length >= 2 ? lineChart(pts, unitIn(best.text)) : '<p class="muted small">Log this one again next time to see a chart.</p>');
+    }
+
+    var html =
+      '<div class="tiles">' +
+        '<div class="tile"><b>' + streak + '</b><span>' + (streak === 1 ? "week" : "weeks") + " in a row</span></div>" +
+        '<div class="tile"><b>' + doneInBlock + "<small>/" + total + '</small></b><span>sessions this block</span></div>' +
+        '<div class="tile"><b>' + thisWeek + '</b><span>' + (thisWeek === 1 ? "session" : "sessions") + " this week</span></div>" +
+      "</div>" +
+      (streak ? '<p class="streak-line">🔥 ' + streak + "-week streak. Train this week to keep it going.</p>" :
+        '<p class="streak-line muted">Tick off a session this week to start a streak.</p>') +
+      '<section class="card"><h3>Sessions per week</h3>' + barChart(weeks8) + "</section>" +
+      '<section class="card"><h3>Your lifts</h3>' + liftHtml + "</section>";
+
+    if (isOnline()) {
+      var cis = myCheckins().slice(0, 8).reverse();
+      var bw = cis.map(function (c) { var d = parseDay(c.week); return { x: d ? d.getTime() : 0, y: numberIn(c.bw), text: c.bw }; })
+        .filter(function (p) { return p.x && p.y != null; });
+      if (cis.length) {
+        html += '<section class="card"><h3>Weekly pulse check</h3>' +
+          '<table class="pulse"><tr><th></th>' + cis.map(function (c) {
+            var d = parseDay(c.week); return "<th>" + esc(d ? shortDate(d) : c.week) + "</th>";
+          }).join("") + "</tr>" +
+          SCORES.map(function (sc) {
+            return "<tr><td>" + esc(sc.name) + "</td>" + cis.map(function (c) {
+              var v = +c[sc.id]; return '<td><span class="cell s' + (v || 0) + '">' + (v || "") + "</span></td>";
+            }).join("") + "</tr>";
+          }).join("") + "</table>" +
+          '<p class="muted small">1 = bad, 2 = OK, 3 = good</p></section>';
+      }
+      if (bw.length >= 2) html += '<section class="card"><h3>Bodyweight</h3>' + lineChart(bw, unitIn(bw[bw.length - 1].text)) + "</section>";
+    }
+    $("progressPane").innerHTML = html;
+  }
+
+  // Simple line chart as SVG. pts: [{ x: time, y: number }]
+  function lineChart(pts, unit) {
+    var W = 320, H = 150, L = 42, R = 10, T = 12, B = 24;
+    var xs = pts.map(function (p) { return p.x; }), ys = pts.map(function (p) { return p.y; });
+    var x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+    var y0 = Math.min.apply(null, ys), y1 = Math.max.apply(null, ys);
+    if (y0 === y1) { y0 -= 1; y1 += 1; }
+    var pad = (y1 - y0) * 0.15; y0 = Math.max(0, y0 - pad); y1 += pad;
+    var px = function (x) { return L + (x1 === x0 ? (W - L - R) / 2 : (x - x0) / (x1 - x0) * (W - L - R)); };
+    var py = function (y) { return T + (1 - (y - y0) / (y1 - y0)) * (H - T - B); };
+    var fmt = function (n) { return String(Math.round(n * 10) / 10); };
+    var line = pts.map(function (p) { return px(p.x).toFixed(1) + "," + py(p.y).toFixed(1); }).join(" ");
+    return (unit ? '<div class="chart-unit">' + esc(unit) + "</div>" : "") +
+      '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Chart">' +
+      [y0, (y0 + y1) / 2, y1].map(function (v) {
+        return '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + py(v).toFixed(1) + '" y2="' + py(v).toFixed(1) + '" class="grid"/>' +
+          '<text x="' + (L - 6) + '" y="' + (py(v) + 4).toFixed(1) + '" text-anchor="end">' + esc(fmt(v)) + "</text>";
+      }).join("") +
+      '<polyline points="' + line + '" class="line"/>' +
+      pts.map(function (p) { return '<circle cx="' + px(p.x).toFixed(1) + '" cy="' + py(p.y).toFixed(1) + '" r="3.5" class="dotp"/>'; }).join("") +
+      '<text x="' + L + '" y="' + (H - 6) + '">' + esc(shortDate(new Date(x0))) + "</text>" +
+      (x1 !== x0 ? '<text x="' + (W - R) + '" y="' + (H - 6) + '" text-anchor="end">' + esc(shortDate(new Date(x1))) + "</text>" : "") +
+    "</svg>";
+  }
+
+  function barChart(bars) {
+    var W = 320, H = 130, T = 14, B = 22, gap = 8;
+    var max = Math.max(3, Math.max.apply(null, bars.map(function (b) { return b.value; })));
+    var bw = (W - gap * (bars.length - 1)) / bars.length;
+    return '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Sessions per week">' +
+      bars.map(function (b, i) {
+        var h = b.value / max * (H - T - B), x = i * (bw + gap), y = H - B - h;
+        return (b.value ? '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="4" class="bar' + (i === bars.length - 1 ? " now" : "") + '"/>' +
+            '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 4).toFixed(1) + '" text-anchor="middle">' + b.value + "</text>" :
+            '<rect x="' + x.toFixed(1) + '" y="' + (H - B - 2) + '" width="' + bw.toFixed(1) + '" height="2" class="bar empty"/>') +
+          '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" class="xl">' + esc(b.label) + "</text>";
+      }).join("") +
+    "</svg>";
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
     var active = document.activeElement;
     var attr = active && active.getAttribute && (active.getAttribute("data-comment") != null ? "data-comment" :
-      active.getAttribute("data-weight") != null ? "data-weight" : null);
+      active.getAttribute("data-weight") != null ? "data-weight" :
+      active.getAttribute("data-ci") != null ? "data-ci" : null);
     var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     renderAll();
@@ -328,9 +668,15 @@
       sessions.classList.add("hidden");
     }
 
+    renderViewTabs();
+    renderReplyNote();
+    renderBookCall(blocks);
+    if (state.view === "checkin") renderCheckin();
+    if (state.view === "progress") renderProgress(blocks);
+
     var note = $("coachNote");
     if (client.message) {
-      note.innerHTML = "<strong>From your coach</strong>" + esc(client.message);
+      note.innerHTML = "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");
@@ -400,7 +746,7 @@
         " · " + status + "</div></div>";
     }).join("");
     return '<div class="day-comment">' +
-      '<label class="comment-label" for="c-' + esc(dayKey) + '">Comments for your coach</label>' + sent +
+      '<label class="comment-label" for="c-' + esc(dayKey) + '">Comments for ' + esc(COACH) + '</label>' + sent +
       '<textarea id="c-' + esc(dayKey) + '" data-comment="' + esc(dayKey) + '" rows="3" maxlength="2000" ' +
         'placeholder="How did it feel? PBs, pain or questions…">' + esc(state.drafts[dayKey] || "") + "</textarea>" +
       '<div class="comment-actions"><button class="btn small primary" data-send="' + esc(dayKey) + '">Send</button></div>' +
@@ -485,6 +831,31 @@
     state.manual = true;
     save(KEY_WEEK, state.week);
     render();
+  });
+
+  $("viewTabs").addEventListener("click", function (e) {
+    var b = e.target.closest("[data-view]");
+    if (!b) return;
+    state.view = b.getAttribute("data-view");
+    render();
+    window.scrollTo(0, 0);
+  });
+
+  $("checkinPane").addEventListener("click", function (e) {
+    var sc = e.target.closest("[data-score]");
+    if (sc) {
+      state.ci[sc.getAttribute("data-score")] = +sc.getAttribute("data-val");
+      render();
+      return;
+    }
+    if (e.target.closest("[data-ci-send]")) sendCheckin();
+  });
+  $("checkinPane").addEventListener("input", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-ci");
+    if (f && state.ci) state.ci[f] = e.target.value;
+  });
+  $("progressPane").addEventListener("change", function (e) {
+    if (e.target.getAttribute && e.target.getAttribute("data-lift") != null) { state.liftPick = e.target.value; render(); }
   });
 
   $("days").addEventListener("click", function (e) {
@@ -645,7 +1016,7 @@
       return { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
     }
     return {
-      client: { name: "Demo Athlete", type: "Weekly", sessions: "Mondays at 7:15 pm", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
+      client: { name: "Demo Athlete", type: "Online only", sessions: "Train on your own schedule, 3 sessions a week", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {
         name: "Demo",
         blocks: [
