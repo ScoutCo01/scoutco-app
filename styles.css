@@ -207,6 +207,7 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
   font-size: 15px; font-weight: 600; color: var(--muted); white-space: nowrap;
 }
 @media (max-width: 380px) { .view-tab { font-size: 14px; padding: 9px 2px; } }
+@media (max-width: 340px) { .view-tabs { gap: 2px; } .view-tab { font-size: 13px; padding: 9px 1px; } }
 .view-tab[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
 .view-tab .dot { position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #fbbf24; }
 

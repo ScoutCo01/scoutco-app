@@ -451,7 +451,7 @@
     var v = [["program", "Program"]];
     if (isOnline()) v.push(["checkin", "Check-in"]);
     v.push(["progress", "Progress"]);
-    if (siteLinks().length) v.push(["site", "ScoutCo"]);
+    if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
     return v;
   }
   function renderViewTabs() {

@@ -7,7 +7,7 @@ window.SCOUTCO_CONFIG = {
   // What clients call you. Used on buttons and notes in the app.
   coachName: "Kirst",
   websiteUrl: "https://www.scoutco.com.au/",
-  // The ScoutCo tab in the app. Change a label or link here, or add another line.
+  // The ScoutCo HQ tab in the app. Change a label or link here, or add another line.
   websiteLinks: [
     { label: "Buy Merch", url: "https://www.scoutco.com.au/shop" },
     { label: "Mindset Stuff", url: "https://www.scoutco.com.au/blog" },
