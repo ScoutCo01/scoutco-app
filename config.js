@@ -11,7 +11,7 @@ window.SCOUTCO_CONFIG = {
   websiteLinks: [
     { label: "Buy Merch", url: "https://www.scoutco.com.au/shop" },
     { label: "Mindset Stuff", url: "https://www.scoutco.com.au/blog" },
-    { label: "Book in additional appointments", url: "https://www.scoutco.com.au/booking-page" },
+    { label: "Book in", url: "https://www.scoutco.com.au/booking-page" },
     { label: "What we're about", url: "https://www.scoutco.com.au/services" }
   ]
 };
