@@ -13,6 +13,7 @@
  *   Weights:  filled in by the app when clients type the weight they used on an exercise
  *   Session notes: filled in by the app when you (Clients Type "Coach") write notes after each client
  *   Check-ins: online clients' weekly pulse check. Type your reply in "Reply from Kirst" and it shows in their app
+ *   To-do:    your own to-do list (Task | Done | Added | Done on | ID). Type tasks here or add them in the app
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -36,6 +37,8 @@ var BLOCK_HEADERS = ["Program", "Block", "Start date"];
 var CHECKINS_TAB = "Check-ins";
 var CHECKIN_HEADERS = ["Updated", "Week of", "Client", "Sleep", "Nutrition", "Energy", "Soreness", "Head noise", "Bodyweight", "Note for Kirst", "Reply from Kirst", "Key"];
 var CHECKIN_SCORES = [["sleep", "Sleep"], ["nutrition", "Nutrition"], ["energy", "Energy"], ["soreness", "Soreness"], ["head", "Head noise"]];
+var TODO_TAB = "To-do";
+var TODO_HEADERS = ["Task", "Done", "Added", "Done on", "ID"];
 var SETTINGS_TAB = "Settings";
 var BOOKING_SETTING = "Check-in call booking link";
 var BOOKING_DEFAULT = "https://scoutcobooking.as.me/?appointmentType=99612561"; // Online Coaching: Call
@@ -71,6 +74,7 @@ function doGet(e) {
     weights: weightsFor_(ss, code),
     ticks: ticksFor_(ss, code),
     checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
+    todos: isCoach_(client.Type) ? todosFor_(ss) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
     updated: new Date().toISOString()
   });
@@ -121,6 +125,143 @@ function checkinsFor_(ss, code) {
   });
   out.sort(function (a, b) { return a.week < b.week ? 1 : -1; });
   return out.slice(0, 26);
+}
+
+/* ------------------------------------------------------------------ */
+/* To-do list (only for the Clients row with Type "Coach").            */
+/* ------------------------------------------------------------------ */
+
+function isCoach_(type) { return /\bcoach\b/i.test(String(type || "")); }
+
+/** The To-do tab, created with a tick box column the first time it's needed. */
+function todoTab_(ss) {
+  var sheet = ss.getSheetByName(TODO_TAB);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(TODO_TAB);
+  sheet.appendRow(TODO_HEADERS);
+  styleHeader_(sheet, TODO_HEADERS.length);
+  sheet.getRange("B2:B").setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+  sheet.getRange("C2:D").setNumberFormat("dd/mm/yyyy");
+  sheet.setColumnWidth(1, 380);
+  sheet.setColumnWidth(5, 120);
+  return sheet;
+}
+
+/**
+ * Where each To-do column is (0-based), found by its heading so it still works if you
+ * add or move columns. Any heading that's missing is added on the right.
+ */
+function todoCols_(sheet) {
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var h = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cols = {};
+  [["task", "Task"], ["done", "Done"], ["added", "Added"], ["doneOn", "Done on"], ["id", "ID"]].forEach(function (c) {
+    var at = h.indexOf(c[1].toLowerCase());
+    if (at < 0) {
+      at = h.length;
+      h.push(c[1].toLowerCase());
+      sheet.getRange(1, at + 1).setValue(c[1]).setFontWeight("bold").setBackground("#ede9fe");
+    }
+    cols[c[0]] = at;
+  });
+  cols.width = h.length;
+  return cols;
+}
+
+function isTicked_(v) { return v === true || /^(true|yes|y|x|✓|✔|done)$/i.test(String(v == null ? "" : v).trim()); }
+function newTodoId_() { return "t" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+/**
+ * Every task on the To-do tab, in the order they are on the tab. Tasks you typed straight
+ * into the sheet get an ID here, so the app can tick them off.
+ */
+function todosFor_(ss) {
+  var sheet = ss.getSheetByName(TODO_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var lock = LockService.getScriptLock();
+  var locked = lock.tryLock(10000);
+  try {
+    var c = todoCols_(sheet);
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width).getValues();
+    var out = [];
+    values.forEach(function (r, i) {
+      var text = text_(r[c.task]);
+      if (!text) return;
+      var id = text_(r[c.id]);
+      if (!id) {
+        if (!locked) return; // can't safely give it an ID right now; it shows next time
+        id = newTodoId_();
+        sheet.getRange(i + 2, c.id + 1).setValue(id);
+      }
+      out.push({ id: id, text: text, done: isTicked_(r[c.done]),
+        at: r[c.added] instanceof Date ? r[c.added].getTime() : 0,
+        doneAt: r[c.doneOn] instanceof Date ? r[c.doneOn].getTime() : 0 });
+    });
+    if (locked) SpreadsheetApp.flush();
+    return out;
+  } finally {
+    if (locked) lock.releaseLock();
+  }
+}
+
+/** Saves one change from the app: a new task, a tick or untick, or a delete. */
+function saveTodo_(todo, ev) {
+  var id = String(ev.key || "");
+  if (!/^[a-z0-9]{4,40}$/i.test(id)) return;
+  var sheet = todo.sheet, c = todo.cols;
+  var at = todo.ids.indexOf(id); // index into the sheet's rows (0 = row 1)
+  if (ev.del) {
+    if (at > 0) {
+      // A sheet must keep one row under the headings, so empty the last one instead of deleting it.
+      if (sheet.getMaxRows() > 2) sheet.deleteRow(at + 1); else sheet.getRange(at + 1, 1, 1, c.width).clearContent();
+      todo.ids.splice(at, 1);
+    }
+    return;
+  }
+  var done = !!ev.done;
+  if (at > 0) {
+    var was = isTicked_(sheet.getRange(at + 1, c.done + 1).getValue());
+    if (was !== done) {
+      sheet.getRange(at + 1, c.done + 1).setValue(done);
+      sheet.getRange(at + 1, c.doneOn + 1).setValue(done ? new Date() : "");
+    }
+    return;
+  }
+  var text = clip_(ev.text, 300).trim();
+  if (!text) return;
+  var row = [];
+  for (var i = 0; i < c.width; i++) row.push("");
+  row[c.task] = cell_(text);
+  row[c.done] = done;
+  row[c.added] = new Date();
+  row[c.doneOn] = done ? new Date() : "";
+  row[c.id] = id;
+  sheet.appendRow(row);
+  todo.ids.push(id);
+}
+
+/**
+ * Runs by itself whenever you edit the sheet. On the To-do tab it fills in the
+ * Added date when you type a task, and the Done on date when you tick one.
+ */
+function onEdit(e) {
+  try {
+    var sheet = e && e.range && e.range.getSheet();
+    if (!sheet || sheet.getName() !== TODO_TAB) return;
+    var first = e.range.getRow(), n = e.range.getNumRows();
+    if (first + n - 1 < 2) return;
+    var c = todoCols_(sheet);
+    var start = Math.max(first, 2), count = first + n - start;
+    var values = sheet.getRange(start, 1, count, c.width).getValues();
+    var editedDone = e.range.getColumn() <= c.done + 1 && c.done + 1 <= e.range.getLastColumn();
+    values.forEach(function (r, i) {
+      var row = start + i;
+      if (text_(r[c.task]) && !(r[c.added] instanceof Date) && text_(r[c.added]) === "") {
+        sheet.getRange(row, c.added + 1).setValue(new Date());
+      }
+      if (editedDone) sheet.getRange(row, c.doneOn + 1).setValue(isTicked_(r[c.done]) ? new Date() : "");
+    });
+  } catch (err) { /* only fills in dates; never stop an edit */ }
 }
 
 function score_(v) { var n = parseInt(v, 10); return n >= 1 && n <= 3 ? n : ""; }
@@ -178,7 +319,7 @@ function doPost(e) {
   try {
     var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
     var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
-    var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null;
+    var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null, todo = null;
     var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var name = String(client.Name || client.Code);
@@ -242,6 +383,15 @@ function doPost(e) {
             cKeys.push(cKey);
           }
           checkins.push({ week: weekOf, scores: scores, bw: clip_(ev.bw, 20).trim(), note: clip_(ev.note, 2000).trim(), updated: cAt > 0 });
+        }
+      } else if (ev.type === "todo") {
+        if (isCoach_(client.Type)) { // only your own coach profile has a to-do list
+          if (!todo) {
+            var tSheet = todoTab_(ss), tCols = todoCols_(tSheet);
+            todo = { sheet: tSheet, cols: tCols,
+              ids: tSheet.getRange(1, tCols.id + 1, Math.max(tSheet.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); }) };
+          }
+          saveTodo_(todo, ev);
         }
       } else if (ev.type === "comment") {
         var text = clip_(ev.text, 2000).trim();
@@ -435,6 +585,7 @@ function onOpen() {
     .addItem("Add a new client", "addClient")
     .addItem("Update weeks left", "updateWeeksLeft")
     .addItem("Set up online clients", "setupOnline")
+    .addItem("Set up to-do list", "setupTodo")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -844,6 +995,7 @@ function setupSheets() {
   tab_(ss, WEIGHTS_TAB, WEIGHT_HEADERS).setColumnWidth(6, 220);
   setupCheckinsTab_(ss);
   setupSettingsTab_(ss);
+  todoTab_(ss);
 
   var first = ss.getSheets()[0];
   if (first.getName() !== CLIENTS_TAB && first.getName() !== PROGRAMS_TAB && first.getLastRow() === 0) {
@@ -885,6 +1037,14 @@ function setupOnline() {
   SpreadsheetApp.getUi().alert("Done! The Book a check-in call button uses the link next to \"" +
     BOOKING_SETTING + "\" on the Settings tab. You can change it there any time.\n\nOnline clients' check-ins will land on the Check-ins tab. " +
     "Type your reply in the green \"Reply from Kirst\" column.");
+}
+
+/** ScoutCo menu → Set up to-do list: adds the To-do tab. */
+function setupTodo() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ss.setActiveSheet(todoTab_(ss));
+  SpreadsheetApp.getUi().alert("Done! Type a task in the Task column (one per row) and tick the Done box when it's finished.\n\n" +
+    "Tasks show in the To-do tab of your coach app, and anything you add or tick there lands here too.");
 }
 
 /** Asks for a name, then adds a client row with a fresh private code. */
