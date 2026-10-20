@@ -11,6 +11,7 @@
   var KEY_TICKS = "scoutco.ticks";
   var KEY_WEIGHTS = "scoutco.weights";
   var KEY_CHECKINS = "scoutco.checkins";
+  var KEY_TODOS = "scoutco.todos";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var COACH = String(CONFIG.coachName || "Kirst");
@@ -18,7 +19,7 @@
   var $ = function (id) { return document.getElementById(id); };
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
-      view: "program", ci: null, liftPick: null };
+      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false };
   }
   var state = freshState();
 
@@ -120,6 +121,7 @@
     mergeWeights(data && data.weights);
     mergeTicks(data && data.ticks);
     mergeCheckins(data && data.checkins);
+    mergeTodos(data && data.todos);
     if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
     var blocks = getBlocks(data);
@@ -140,7 +142,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS);
     state = freshState();
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
@@ -157,7 +159,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -364,8 +366,88 @@
   }
   function weekLabel(week) { var d = parseDay(week); return d ? "week of " + shortDate(d) : week; }
 
+  // ---------- coach to-do list ----------
+  // The list lives on the To-do tab of the sheet. Kirst can add and tick tasks there or here.
+  // Saved on the phone as { code, list: [{ id, text, done, at, doneAt }] } in the sheet's order.
+  function getTodos() { var t = load(KEY_TODOS, null); return t && t.code === state.code ? t.list : []; }
+  function saveTodos(list) { save(KEY_TODOS, { code: state.code, list: list }); }
+  function applyTodo(list, ev) {
+    var i = -1;
+    list.forEach(function (t, n) { if (t.id === ev.key) i = n; });
+    if (ev.del) { if (i >= 0) list.splice(i, 1); return; }
+    if (i >= 0) {
+      if (list[i].done !== !!ev.done) { list[i].done = !!ev.done; list[i].doneAt = ev.done ? ev.at || Date.now() : 0; }
+    } else if (ev.text) {
+      list.push({ id: ev.key, text: ev.text, done: !!ev.done, at: ev.added || 0, doneAt: ev.done ? ev.at || 0 : 0 });
+    }
+  }
+  // The sheet's list wins, except for changes made here that haven't reached the sheet yet.
+  function mergeTodos(server) {
+    if (!Array.isArray(server) || !state.code) return; // older script: keep what's on the phone
+    var list = server.filter(function (t) { return t && t.id && t.text; }).map(function (t) {
+      return { id: String(t.id), text: String(t.text), done: !!t.done, at: +t.at || 0, doneAt: +t.doneAt || 0 };
+    });
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "todo") applyTodo(list, x); });
+    saveTodos(list);
+  }
+  function changeTodo(ev) {
+    ev.type = "todo";
+    ev.at = Date.now();
+    var list = getTodos();
+    applyTodo(list, ev);
+    saveTodos(list);
+    queue(ev);
+    render();
+  }
+  function addTodo(text) {
+    text = String(text || "").trim().slice(0, 300);
+    if (!text) return;
+    var now = Date.now();
+    changeTodo({ key: "t" + newId(), text: text, done: false, added: now });
+  }
+  function todoById(id) { return getTodos().filter(function (t) { return t.id === id; })[0]; }
+
+  function renderTodo() {
+    var list = getTodos();
+    var open = list.filter(function (t) { return !t.done; });
+    var done = list.filter(function (t) { return t.done; }).sort(function (a, b) { return (b.doneAt || 0) - (a.doneAt || 0); });
+    var shown = state.todoAll ? done : done.slice(0, 10);
+    var waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "todo") waiting[x.key] = true; });
+    var item = function (t) {
+      return '<li class="todo-item' + (t.done ? " done" : "") + '">' +
+        '<button class="check" data-todo-tick="' + esc(t.id) + '" aria-pressed="' + t.done + '" aria-label="' + (t.done ? "Untick " : "Tick off ") + esc(t.text) + '">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0b1a14" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>' +
+        "</button>" +
+        '<div class="todo-text"><span>' + esc(t.text) + "</span>" +
+          (t.done && t.doneAt ? '<small>Done ' + esc(new Date(t.doneAt).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })) + "</small>" : "") +
+          (waiting[t.id] && canSend() ? "<small>Saving…</small>" : "") +
+        "</div>" +
+        '<button class="todo-del" data-todo-del="' + esc(t.id) + '" aria-label="Delete ' + esc(t.text) + '">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>' +
+        "</button></li>";
+    };
+    $("todoPane").innerHTML =
+      '<section class="card todo">' +
+        "<h2>To-do</h2>" +
+        '<form class="todo-add" data-todo-form autocomplete="off">' +
+          '<label for="todo-new" class="sr-only">New task</label>' +
+          '<input id="todo-new" class="ci-input" data-todo-new="1" type="text" maxlength="300" enterkeyhint="done" placeholder="e.g. Send Lauren invoice" value="' + esc(state.todoDraft) + '">' +
+          '<button class="btn primary" type="submit">Add</button>' +
+        "</form>" +
+        (open.length ? '<ul class="todo-list">' + open.map(item).join("") + "</ul>" :
+          '<p class="muted todo-empty">' + (list.length ? "All done. Nice work!" : "Nothing on your list yet.") + "</p>") +
+        '<p class="muted small">You can also type tasks on the To-do tab of your sheet. They show here next time the app opens.</p>' +
+      "</section>" +
+      (done.length ? '<h3 class="section-title">Done (' + done.length + ")</h3>" +
+        '<section class="card todo"><ul class="todo-list">' + shown.map(item).join("") + "</ul>" +
+        (done.length > shown.length || state.todoAll && done.length > 10 ?
+          '<button class="btn small ghost" data-todo-all>' + (state.todoAll ? "Show fewer" : "Show all " + done.length) + "</button>" : "") +
+        "</section>" : "");
+  }
+
   function viewList() {
-    if (isCoach()) return [];
+    if (isCoach()) return [["program", "Schedule"], ["todo", "To-do"]];
     var v = [["program", "Program"]];
     if (isOnline()) v.push(["checkin", "Check-in"]);
     v.push(["progress", "Progress"]);
@@ -375,14 +457,17 @@
     var views = viewList();
     if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
     var due = isOnline() && !checkinFor(thisWeekOf());
+    var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + (v[0] === "checkin" && due ? '<span class="dot" aria-label="due"></span>' : "") + "</button>";
+        esc(v[1]) + (v[0] === "checkin" && due ? '<span class="dot" aria-label="due"></span>' : "") +
+        (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") + "</button>";
     }).join("");
     $("programPane").classList.toggle("hidden", state.view !== "program");
     $("checkinPane").classList.toggle("hidden", state.view !== "checkin");
     $("progressPane").classList.toggle("hidden", state.view !== "progress");
+    $("todoPane").classList.toggle("hidden", state.view !== "todo");
   }
 
   function renderReplyNote() {
@@ -633,7 +718,8 @@
     var active = document.activeElement;
     var attr = active && active.getAttribute && (active.getAttribute("data-comment") != null ? "data-comment" :
       active.getAttribute("data-weight") != null ? "data-weight" :
-      active.getAttribute("data-ci") != null ? "data-ci" : null);
+      active.getAttribute("data-ci") != null ? "data-ci" :
+      active.getAttribute("data-todo-new") != null ? "data-todo-new" : null);
     var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     renderAll();
@@ -673,6 +759,7 @@
     renderBookCall(blocks);
     if (state.view === "checkin") renderCheckin();
     if (state.view === "progress") renderProgress(blocks);
+    if (state.view === "todo") renderTodo();
 
     var note = $("coachNote");
     if (client.message) {
@@ -854,6 +941,31 @@
     var f = e.target.getAttribute && e.target.getAttribute("data-ci");
     if (f && state.ci) state.ci[f] = e.target.value;
   });
+  $("todoPane").addEventListener("submit", function (e) {
+    e.preventDefault();
+    addTodo(state.todoDraft);
+    state.todoDraft = "";
+    render();
+  });
+  $("todoPane").addEventListener("input", function (e) {
+    if (e.target.getAttribute && e.target.getAttribute("data-todo-new") != null) state.todoDraft = e.target.value;
+  });
+  $("todoPane").addEventListener("click", function (e) {
+    var tick = e.target.closest("[data-todo-tick]");
+    if (tick) {
+      var t = todoById(tick.getAttribute("data-todo-tick"));
+      if (t) changeTodo({ key: t.id, text: t.text, done: !t.done });
+      return;
+    }
+    var del = e.target.closest("[data-todo-del]");
+    if (del) {
+      var d = todoById(del.getAttribute("data-todo-del"));
+      if (d && window.confirm("Delete \"" + d.text + "\"?")) changeTodo({ key: d.id, text: d.text, del: true });
+      return;
+    }
+    if (e.target.closest("[data-todo-all]")) { state.todoAll = !state.todoAll; render(); }
+  });
+
   $("progressPane").addEventListener("change", function (e) {
     if (e.target.getAttribute && e.target.getAttribute("data-lift") != null) { state.liftPick = e.target.value; render(); }
   });

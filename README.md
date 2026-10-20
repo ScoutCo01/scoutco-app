@@ -114,6 +114,14 @@ Add yourself as a client on the Clients tab and set **Type** to `Coach`. Your ap
 - Under each client there's a **Session notes** box instead of "Weight used". Notes save to a **Session notes** tab, and the app shows your note from their last session.
 - Your schedule has no "Comments for your coach" box and is left out of the Monday email.
 
+### Your to-do list
+
+Your coach app has a **To-do** tab next to **Schedule**. Type a task (e.g. `Send Lauren invoice`) and tap **Add**, tick it off when it's done, or tap ✕ to delete it.
+
+Everything is kept on the **To-do** tab of your sheet (Task | Done | Added | Done on | ID), so you can also work from there: type a task in the **Task** column and tick the **Done** box. The Added and Done on dates fill in by themselves. Changes in the sheet show in the app next time it opens or comes back to the front. Leave the **ID** column alone; the app uses it to match tasks up.
+
+If the tab isn't there yet, choose **ScoutCo → Set up to-do list**. Only the Clients row with Type `Coach` gets a to-do list.
+
 ## Sending the app to a client
 
 **Tip:** to get every client's link in the sheet, paste this into cell **F1** of the Clients tab:
