@@ -38,6 +38,7 @@ var CHECKIN_HEADERS = ["Updated", "Week of", "Client", "Sleep", "Nutrition", "En
 var CHECKIN_SCORES = [["sleep", "Sleep"], ["nutrition", "Nutrition"], ["energy", "Energy"], ["soreness", "Soreness"], ["head", "Head noise"]];
 var SETTINGS_TAB = "Settings";
 var BOOKING_SETTING = "Check-in call booking link";
+var BOOKING_DEFAULT = "https://scoutcobooking.as.me/?appointmentType=99612561"; // Online Coaching: Call
 
 var CLIENT_HEADERS = ["Code", "Name", "Program", "Active", "Message"];
 var PROGRAM_HEADERS = ["Program", "Block", "Week", "Day", "Order", "Exercise", "Sets", "Reps", "Load", "Tempo", "Rest", "Notes", "Video"];
@@ -872,7 +873,7 @@ function setupSettingsTab_(ss) {
     sheet.setColumnWidth(2, 480);
   }
   var names = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
-  if (names.indexOf(BOOKING_SETTING.toLowerCase()) === -1) sheet.appendRow([BOOKING_SETTING, ""]);
+  if (names.indexOf(BOOKING_SETTING.toLowerCase()) === -1) sheet.appendRow([BOOKING_SETTING, BOOKING_DEFAULT]);
   return sheet;
 }
 
@@ -881,8 +882,8 @@ function setupOnline() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   setupCheckinsTab_(ss);
   ss.setActiveSheet(setupSettingsTab_(ss));
-  SpreadsheetApp.getUi().alert("Done! Paste your Squarespace booking link for the Online Coaching Call Check In next to \"" +
-    BOOKING_SETTING + "\" on the Settings tab.\n\nOnline clients' check-ins will land on the Check-ins tab. " +
+  SpreadsheetApp.getUi().alert("Done! The Book a check-in call button uses the link next to \"" +
+    BOOKING_SETTING + "\" on the Settings tab. You can change it there any time.\n\nOnline clients' check-ins will land on the Check-ins tab. " +
     "Type your reply in the green \"Reply from Kirst\" column.");
 }
 
