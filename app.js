@@ -451,6 +451,7 @@
     var v = [["program", "Program"]];
     if (isOnline()) v.push(["checkin", "Check-in"]);
     v.push(["progress", "Progress"]);
+    if (siteLinks().length) v.push(["site", "ScoutCo"]);
     return v;
   }
   function renderViewTabs() {
@@ -468,6 +469,22 @@
     $("checkinPane").classList.toggle("hidden", state.view !== "checkin");
     $("progressPane").classList.toggle("hidden", state.view !== "progress");
     $("todoPane").classList.toggle("hidden", state.view !== "todo");
+    $("sitePane").classList.toggle("hidden", state.view !== "site");
+  }
+
+  // Links to the ScoutCo website, set in config.js (websiteLinks).
+  function siteLinks() {
+    var list = (window.SCOUTCO_CONFIG || {}).websiteLinks || [];
+    return list.filter(function (l) { return l && l.label && /^https?:\/\//.test(String(l.url || "")); });
+  }
+  function renderSite() {
+    $("sitePane").innerHTML = '<ul class="site-links">' + siteLinks().map(function (l) {
+      return '<li><a class="site-link" href="' + esc(l.url) + '" target="_blank" rel="noopener">' +
+        "<span>" + esc(l.label) + "</span>" +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>' +
+        "</a></li>";
+    }).join("") + "</ul>" +
+      '<p class="muted small">Opens the ScoutCo website in your browser.</p>';
   }
 
   function renderReplyNote() {
@@ -760,6 +777,7 @@
     if (state.view === "checkin") renderCheckin();
     if (state.view === "progress") renderProgress(blocks);
     if (state.view === "todo") renderTodo();
+    if (state.view === "site") renderSite();
 
     var note = $("coachNote");
     if (client.message) {
