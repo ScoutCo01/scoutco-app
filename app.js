@@ -447,10 +447,13 @@
   }
 
   function viewList() {
-    if (isCoach()) return [["program", "Schedule"], ["todo", "To-do"]];
-    var v = [["program", "Program"]];
-    if (isOnline()) v.push(["checkin", "Check-in"]);
-    v.push(["progress", "Progress"]);
+    var v;
+    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"]];
+    else {
+      v = [["program", "Program"]];
+      if (isOnline()) v.push(["checkin", "Check-in"]);
+      v.push(["progress", "Progress"]);
+    }
     if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
     return v;
   }
