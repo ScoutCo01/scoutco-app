@@ -70,7 +70,7 @@ These tabs are created automatically (or by **ScoutCo → Set up tabs**). If a c
 
 ## Home swaps (training at home)
 
-If a client can't get to the gym, they can tap **⇄ Swap for home** on an exercise (or **Swap all for home** at the top of a session) to see a version they can do with minimal equipment: bodyweight, bands or light dumbbells. Sets, reps and rest stay the same; the load is hidden and your "How to do it" note shows instead. Squats, deadlifts and bench press (and their barbell variations) are gym only and can't be swapped.
+If a client can't get to the gym, they can tap **⇄ Swap for home** on an exercise (or **Swap all for home** at the top of a session) to see a version they can do with minimal equipment: bodyweight, bands or light dumbbells. Sets, reps and rest stay the same; the load is hidden and your "How to do it" note shows instead. Back squat, deadlift and bench press (and their barbell variations) are gym only and can't be swapped. Other squats like front or goblet squats can be swapped.
 
 The swaps live on the **Home swaps** tab (Exercise | Home swap | How to do it | Video). Choose **ScoutCo → Set up home swaps** once and it lists every exercise on your Programs tab with a suggested swap. Then:
 

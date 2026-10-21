@@ -996,11 +996,15 @@ var SWAPS_TAB = "Home swaps";
 var SWAP_HEADERS = ["Exercise", "Home swap", "How to do it", "Video"];
 var NO_SWAP = "No swap";
 
-/** The main barbell lifts (squat, deadlift, bench press and their variations) can't be swapped. */
+/**
+ * Back squat, deadlift and bench press (and their barbell variations) can't be swapped.
+ * Other squats (front, goblet, split and so on) can.
+ */
 function isGymOnly_(name) {
   var n = String(name || "").toLowerCase();
+  if (/\b(front|goblet|split|bulgarian|hack|sissy|jump|air|wall)\b/.test(n)) return false;
   if (!/\b(squat|deadlift|bench|larsen press|spoto press|rack pull)\b/.test(n)) return false;
-  return !/\b(romanian|rdl|stiff|single-leg|kettlebell|split|bulgarian|goblet|hack|lunge|db|dumbbell|push-up|hip thrust|step-up)\b/.test(n);
+  return !/\b(romanian|rdl|stiff|single-leg|kettlebell|lunge|db|dumbbell|push-up|hip thrust|step-up)\b/.test(n);
 }
 
 /**
@@ -1044,7 +1048,7 @@ var SWAP_RULES = [
   [/hip thrust/, "DB hip thrust off the couch", "Upper back on the couch, DB on the hips. Single-leg if it's too easy."],
   [/romanian deadlift|barbell rdl|stiff-leg/, "DB or backpack RDL", "Push the hips back, flat back, slow on the way down."],
   [/good morning/, "Band good morning", "Stand on the band, loop it behind your neck and hinge."],
-  [/hack squat|front squat \/ goblet/, "Goblet squat (DB or backpack)", "Heels raised on a small plate or book if you like, slow on the way down."],
+  [/hack squat|front squat/, "Goblet squat (DB or backpack)", "Heels raised on a small plate or book if you like, slow on the way down."],
   [/leg press/, "Goblet squat (DB or backpack)", "3 seconds on the way down. Add a few reps to make up for the lighter load."],
   [/leg extension/, "Wall sit", "Hold for about as long as your set would take (30-45 s)."],
   [/adduct/, "Short-lever Copenhagen plank", "Top knee on the couch, lift your hips and hold."],

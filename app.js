@@ -271,7 +271,7 @@
 
   // ---------- home swaps ----------
   // Saved on the phone as { "<code>|<block>|<week>|<session>|<n>": { name: "Band lat pulldown", at: ms } }.
-  // The exercise's home version comes from the Home swaps tab (ex.home); squats, deadlifts and bench (ex.locked) stay gym only.
+  // The exercise's home version comes from the Home swaps tab (ex.home); back squat, deadlift and bench (ex.locked) stay gym only.
   function getSwaps() { return load(KEY_SWAPS, {}); }
   function setSwap(key, home) {
     var all = getSwaps();
@@ -1243,7 +1243,7 @@
         "chest-supported row": ["DB or band bent-over row", "Hinge forward with a flat back and pull to your belly button."]
       };
       var h = homes[name.toLowerCase()];
-      if (/squat$|deadlift|bench press/i.test(name) && !h && !/split/i.test(name)) x.locked = true;
+      if (/back squat|deadlift|bench press/i.test(name) && !h) x.locked = true;
       else if (h && h[0]) x.home = { name: h[0], how: h[1] };
       return x;
     }
