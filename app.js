@@ -15,6 +15,7 @@
   var KEY_TODOS = "scoutco.todos";
   var KEY_PROFILE = "scoutco.profile";
   var KEY_COMMUNITY = "scoutco.community";
+  var KEY_PUSH_ASKED = "scoutco.pushAsked";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var COACH = String(CONFIG.coachName || "Kirst");
@@ -1357,6 +1358,7 @@
           render();
         });
         render();
+        setTimeout(askPush, 1200);
       }).catch(function (err) {
         push.failed = true;
         push.err = String((err && (err.message || err)) || "").slice(0, 200);
@@ -1374,6 +1376,30 @@
     Promise.resolve(p).catch(function () { /* they said no */ }).then(function () {
       push.on = !!OS.User.PushSubscription.optedIn;
       push.busy = false; render();
+    });
+  }
+  // Asks once, the first time notifications can be turned on: "Turn on" or "Not now".
+  // The 🔔 card on the Lift Club and Profile tabs is always there to change it later.
+  function askPush() {
+    var asked = load(KEY_PUSH_ASKED, []);
+    if (!push.ready || !push.supported || push.on || asked.indexOf(state.code) !== -1) return;
+    if (window.Notification && Notification.permission === "denied") return;
+    if (document.querySelector(".pb-pop")) { setTimeout(askPush, 3000); return; } // wait for another pop-up to close
+    asked.push(state.code);
+    save(KEY_PUSH_ASKED, asked);
+    var el = document.createElement("div");
+    el.className = "pb-pop push-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "Lift Club notifications");
+    el.innerHTML = '<div class="coach-pop-card push-pop-card"><div class="push-pop-bell" aria-hidden="true">🔔</div>' +
+      "<h2>Get notified when someone posts in the Lift Club?</h2>" +
+      '<p class="muted">You\'ll get a notification for new posts and replies to yours. You can turn it off any time on your Profile tab.</p>' +
+      '<button class="btn primary" data-push-yes>Turn on</button><button class="btn ghost" data-push-no>Not now</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener("click", function (e) {
+      if (e.target.closest("[data-push-yes]")) { el.remove(); if (!push.on) togglePush(); }
+      else if (e.target === el || e.target.closest("[data-push-no]")) el.remove();
     });
   }
   function pushCardHtml() {
