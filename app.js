@@ -1337,7 +1337,7 @@
     var s = document.createElement("script");
     s.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
     s.defer = true;
-    s.onerror = function () { push.failed = true; render(); };
+    s.onerror = function () { push.failed = true; push.err = "Couldn't load OneSignal."; render(); };
     document.head.appendChild(s);
     var base = location.pathname.replace(/[^\/]*$/, ""); // e.g. "/scoutco-app/"
     window.OneSignalDeferred.push(function (OneSignal) {
@@ -1357,7 +1357,11 @@
           render();
         });
         render();
-      }).catch(function () { push.failed = true; render(); });
+      }).catch(function (err) {
+        push.failed = true;
+        push.err = String((err && (err.message || err)) || "").slice(0, 200);
+        render();
+      });
     });
   }
   function togglePush() {
@@ -1378,7 +1382,8 @@
     if (isIOS && !isStandalone) {
       body = "To get a notification when someone posts, add this app to your home screen first (tap the Share button, then Add to Home Screen). Then open it from there and turn notifications on here.";
     } else if (push.failed) {
-      body = "Notifications aren't available on this phone right now.";
+      body = "Notifications aren't available on this phone right now." + (push.err ? " (" + push.err + ")" : "");
+      btn = '<button class="btn small ghost" data-push-retry>Try again</button>';
     } else if (!push.ready) {
       return "";
     } else if (!push.supported) {
@@ -1396,6 +1401,7 @@
   }
   document.addEventListener("click", function (e) {
     if (e.target.closest && e.target.closest("[data-push-toggle]")) togglePush();
+    if (e.target.closest && e.target.closest("[data-push-retry]")) location.reload();
   });
 
   // A small card on the Program tab until they've filled in their profile.
