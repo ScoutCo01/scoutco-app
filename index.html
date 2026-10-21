@@ -49,14 +49,18 @@
     <!-- Program screen -->
     <section id="programView" class="view hidden">
       <div class="hello">
-        <h1 id="helloName"></h1>
-        <p class="muted small" id="updatedAt"></p>
+        <div class="hello-photo hidden" id="helloPhoto"></div>
+        <div>
+          <h1 id="helloName"></h1>
+          <p class="muted small" id="updatedAt"></p>
+        </div>
       </div>
       <div class="notice hidden" id="offlineNotice">You're offline, so this is your last saved copy.</div>
       <nav class="view-tabs hidden" id="viewTabs" aria-label="Sections"></nav>
       <div id="programPane">
         <div class="coach-note reply-note hidden" id="replyNote"></div>
         <div class="book-call hidden" id="bookCall"></div>
+        <div class="book-call hidden" id="profileNudge"></div>
         <div class="sessions hidden" id="sessionsCard"></div>
         <div class="coach-note hidden" id="coachNote"></div>
         <nav class="weeks" id="blockTabs" aria-label="Blocks"></nav>
@@ -67,6 +71,7 @@
       <div id="checkinPane" class="hidden"></div>
       <div id="progressPane" class="hidden"></div>
       <div id="todoPane" class="hidden"></div>
+      <div id="profilePane" class="hidden"></div>
       <div id="sitePane" class="hidden"></div>
     </section>
 
