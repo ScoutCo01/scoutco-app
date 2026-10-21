@@ -380,12 +380,11 @@ input[type="date"].ci-input { min-height: 44px; color-scheme: dark; }
 @keyframes pb-fade { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .confetti { display: none; } .pb-card, .pb-pop { animation: none; } }
 
-/* Five tabs on a small phone: let them scroll sideways rather than squash */
-.view-tabs { overflow-x: auto; scrollbar-width: none; }
-.view-tabs::-webkit-scrollbar { display: none; }
-.view-tab { flex: 1 0 auto; }
-@media (max-width: 430px) { .view-tabs { gap: 0; padding: 3px; } .view-tab { font-size: 13px; padding: 9px 3px; } .view-tab .dot { top: 3px; right: 1px; } }
-@media (max-width: 360px) { .view-tab { font-size: 11.5px; padding: 9px 2px; } }
+/* Lots of tabs: they wrap onto a second row so every one is visible, no sideways scrolling */
+.view-tabs { flex-wrap: wrap; }
+.view-tab { flex: 1 0 auto; padding: 9px 10px; }
+@media (max-width: 430px) { .view-tabs { gap: 3px; padding: 3px; } .view-tab { font-size: 14px; padding: 9px 8px; } .view-tab .dot { top: 3px; right: 3px; } }
+@media (max-width: 360px) { .view-tab { font-size: 13px; padding: 8px 6px; } }
 
 /* Coach profile, as clients see it */
 .coach-card-head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
