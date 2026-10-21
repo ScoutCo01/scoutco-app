@@ -946,7 +946,8 @@
         '<div class="ex-name">' + (ex.label ? '<span class="ex-label">' + esc(ex.label) + "</span>" : "") + esc(name) + "</div>" +
         (stats ? '<div class="ex-stats">' + stats + "</div>" : "") +
         (notes ? '<div class="ex-notes">' + esc(notes) + "</div>" : "") +
-        (video ? '<a class="ex-video" href="' + esc(video) + '" target="_blank" rel="noopener">▶ Watch demo</a>' : "") +
+        (video ? '<a class="ex-video" href="' + esc(video) + '" target="_blank" rel="noopener">' +
+          (/youtube\.com\/results/.test(video) ? "▶ Demo videos on YouTube" : "▶ Watch demo") + "</a>" : "") +
         swapLine +
         weightHtml(ex, key, weights, name) +
       "</div>" +

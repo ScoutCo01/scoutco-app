@@ -72,6 +72,7 @@ function doGet(e) {
   var blocks = addStartDates_(ss, programName, groupBlocks_(rows));
   if (!isCoach_(client.Type)) {
     try { addHomeSwaps_(ss, blocks); } catch (err) { /* the program still loads, just without swaps */ }
+    try { addDemoLinks_(blocks); } catch (err) { /* not essential */ }
   }
 
   return json_({
@@ -1148,6 +1149,28 @@ function syncHomeSwaps_(ss) {
   if (isNew) add.sort(function (a, b) { return a[0].toLowerCase() < b[0].toLowerCase() ? -1 : 1; });
   if (add.length) sheet.getRange(sheet.getLastRow() + 1, 1, add.length, SWAP_HEADERS.length).setValues(add);
   return add.length;
+}
+
+/**
+ * A YouTube search for an exercise's demo. Used when the Video cell (on Programs or Home swaps) is empty.
+ * The main lifts (gym only) don't get one. Paste your own video link in the Video column to use that instead.
+ */
+function demoLink_(name) {
+  var q = String(name || "").split(/\s+[—–]\s+|:\s/)[0].trim();
+  return q ? "https://www.youtube.com/results?search_query=" + encodeURIComponent(q + " exercise demo") : "";
+}
+function addDemoLinks_(blocks) {
+  blocks.forEach(function (b) {
+    b.weeks.forEach(function (w) {
+      w.days.forEach(function (d) {
+        d.exercises.forEach(function (x) {
+          if (!x.video && !x.locked && !isGymOnly_(x.name)) x.video = demoLink_(x.name);
+          if (x.home && !x.home.video) x.home.video = demoLink_(x.home.name);
+        });
+      });
+    });
+  });
+  return blocks;
 }
 
 /** ScoutCo menu → Set up home swaps. */
