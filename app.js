@@ -14,6 +14,7 @@
   var KEY_CHECKINS = "scoutco.checkins";
   var KEY_TODOS = "scoutco.todos";
   var KEY_PROFILE = "scoutco.profile";
+  var KEY_COMMUNITY = "scoutco.community";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var COACH = String(CONFIG.coachName || "Kirst");
@@ -21,7 +22,8 @@
   var $ = function (id) { return document.getElementById(id); };
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
-      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "" };
+      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
+      commDraft: "", commReply: null, commReplyDraft: "", commMsg: "", commErr: "" };
   }
   var state = freshState();
 
@@ -146,7 +148,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY);
     state = freshState();
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
@@ -181,6 +183,9 @@
       .then(function (res) {
         if (res && res.ok) {
           var saved = res.saved || [];
+          var sentComm = box.filter(function (x) { return COMM_TYPES[x.type] && saved.indexOf(x.id) !== -1; });
+          sentComm.forEach(function (x) { x.sentAt = Date.now(); commSent.push(x); });
+          if (sentComm.length) setTimeout(fetchCommunity, 0);
           save(KEY_OUTBOX, load(KEY_OUTBOX, []).filter(function (x) { return saved.indexOf(x.id) === -1; }));
           if (state.data) render();
         }
@@ -480,11 +485,12 @@
 
   function viewList() {
     var v;
-    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["profile", "Profile"]];
+    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["community", "Lift Club Community"], ["profile", "Profile"]];
     else {
       v = [["program", "Program"]];
       if (isOnline()) v.push(["checkin", "Check-in"]);
       v.push(["progress", "Progress"]);
+      v.push(["community", "Lift Club Community"]);
       v.push(["profile", "Profile"]);
     }
     if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
@@ -495,11 +501,12 @@
     if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
     var due = isOnline() && !checkinFor(thisWeekOf());
     var profDue = profileNeedsFilling();
+    var commDot = state.view !== "community" && commUnread();
     var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) ? '<span class="dot" aria-label="to do"></span>' : "") +
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) ? '<span class="dot" aria-label="to do"></span>' : "") +
         (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") + "</button>";
     }).join("");
     $("programPane").classList.toggle("hidden", state.view !== "program");
@@ -509,6 +516,7 @@
     $("sitePane").classList.toggle("hidden", state.view !== "site");
     $("profilePane").classList.toggle("hidden", state.view !== "profile");
     $("clientsPane").classList.toggle("hidden", state.view !== "clients");
+    $("communityPane").classList.toggle("hidden", state.view !== "community");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -1162,6 +1170,158 @@
       }).join("");
   }
 
+  // ---------- Lift Club Community ----------
+  // Posts load on their own (not with the program) and are kept on the phone for offline.
+  // New posts, reactions and deletes go through the outbox, and show straight away.
+  var COMM_TYPES = { post: 1, react: 1, unpost: 1 };
+  var COMM_REACTIONS = ["💪", "🔥", "👏", "❤️"];
+  var commSent = []; // sent and saved, but not in a fresh copy of the feed yet
+  var commLoading = false;
+  function commStore() { var s = load(KEY_COMMUNITY, null); return s && s.code === state.code ? s : { code: state.code, feed: null, seen: 0 }; }
+  function saveCommStore(s) { save(KEY_COMMUNITY, s); }
+  function fetchCommunity() {
+    if (commLoading || !state.code) return;
+    if (state.code === "DEMO" || !CONFIG.apiUrl) {
+      var d = commStore(); d.feed = demoCommunity(); saveCommStore(d);
+      if (state.view === "community") render();
+      return;
+    }
+    commLoading = true;
+    var started = Date.now();
+    var url = CONFIG.apiUrl + (CONFIG.apiUrl.indexOf("?") === -1 ? "?" : "&") +
+      "code=" + encodeURIComponent(state.code) + "&community=1&t=" + started;
+    fetch(url, { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error("bad"); return r.json(); })
+      .then(function (json) {
+        if (!json || json.error || !Array.isArray(json.posts)) throw new Error("bad");
+        var s = commStore(); s.feed = json; saveCommStore(s);
+        commSent = commSent.filter(function (x) { return x.sentAt >= started; });
+        state.commErr = "";
+      })
+      .catch(function () { state.commErr = commStore().feed ? "" : "Couldn't load the Lift Club right now. Pull down or try again soon."; })
+      .then(function () { commLoading = false; if (state.view === "community") render(); });
+  }
+  function commFeed() {
+    var server = commStore().feed;
+    var me = server ? server.me : "me";
+    var people = Object.assign({}, server ? server.people : {});
+    if (!people[me]) people[me] = { name: isCoach() ? COACH : String(((state.data || {}).client || {}).name || "You").split(" ")[0], photo: "", coach: isCoach() };
+    // Your own photo straight from your profile, so a new one shows straight away.
+    var myPhoto = safePhoto(getProfile().photo);
+    if (myPhoto) people[me] = Object.assign({}, people[me], { photo: myPhoto });
+    var posts = (server ? server.posts : []).map(function (p) {
+      return Object.assign({}, p, { counts: Object.assign({}, p.counts), mine: (p.mine || []).slice() });
+    });
+    var byId = {};
+    posts.forEach(function (p) { byId[p.id] = p; });
+    var gone = {};
+    var waiting = load(KEY_OUTBOX, []).filter(function (x) { return COMM_TYPES[x.type]; });
+    commSent.concat(waiting).forEach(function (ev) {
+      if (ev.type === "post" && !byId[ev.id]) {
+        var p = { id: ev.id, by: me, at: ev.at, text: ev.text, parent: ev.parent || "", counts: {}, mine: [], pending: isPending(ev.id) };
+        posts.push(p); byId[p.id] = p;
+      } else if (ev.type === "react" && byId[ev.post]) {
+        var q = byId[ev.post], has = q.mine.indexOf(ev.emoji) !== -1;
+        if (ev.on && !has) { q.mine.push(ev.emoji); q.counts[ev.emoji] = (q.counts[ev.emoji] || 0) + 1; }
+        if (!ev.on && has) { q.mine.splice(q.mine.indexOf(ev.emoji), 1); q.counts[ev.emoji] = Math.max(0, (q.counts[ev.emoji] || 1) - 1); }
+      } else if (ev.type === "unpost") gone[ev.post] = true;
+    });
+    posts = posts.filter(function (p) { return !gone[p.id] && !gone[p.parent]; });
+    var tops = posts.filter(function (p) { return !p.parent; }).sort(function (a, b) { return b.at - a.at; });
+    var replies = {};
+    posts.forEach(function (p) { if (p.parent) (replies[p.parent] = replies[p.parent] || []).push(p); });
+    Object.keys(replies).forEach(function (k) { replies[k].sort(function (a, b) { return a.at - b.at; }); });
+    return { me: me, people: people, tops: tops, replies: replies, loaded: !!server };
+  }
+  function commNewest() {
+    var latest = 0;
+    var data = (state.data && state.data.community) || {};
+    if (+data.latest) latest = +data.latest;
+    var f = commStore().feed;
+    if (f) f.posts.forEach(function (p) { if (p.by !== f.me && p.at > latest) latest = p.at; });
+    return latest;
+  }
+  function commUnread() { return commNewest() > (commStore().seen || 0); }
+  function markCommSeen() {
+    var s = commStore(), n = commNewest();
+    if (n > (s.seen || 0)) { s.seen = n; saveCommStore(s); }
+  }
+  function timeAgo(ms) {
+    if (!ms) return "";
+    var mins = Math.round((Date.now() - ms) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    if (mins < 60 * 24) return Math.round(mins / 60) + "h ago";
+    var d = new Date(ms), y = addDays(todayDay(), -1);
+    if (d.toDateString() === y.toDateString()) return "yesterday";
+    return d.toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+  }
+  function commAvatar(person) {
+    var photo = safePhoto(person.photo);
+    var inner = photo ? '<img src="' + esc(photo) + '" alt="">' : esc(initials(person.name));
+    // Clients can tap Kirst's photo to see her profile.
+    if (person.coach && !isCoach() && coachCardHtml()) return '<button class="mini-avatar comm-avatar" data-coach-open aria-label="About ' + esc(person.name) + '">' + inner + "</button>";
+    return '<span class="mini-avatar comm-avatar">' + inner + "</span>";
+  }
+  function commByline(p, f) {
+    var who = f.people[p.by] || { name: "ScoutCo member" };
+    return '<div class="comm-head">' + commAvatar(who) +
+      '<div class="comm-who"><b>' + esc(who.name) + "</b>" + (who.coach ? '<span class="type-badge comm-coach">Coach</span>' : "") +
+      '<small class="muted">' + (p.pending ? "Sending…" : esc(timeAgo(p.at))) + "</small></div></div>";
+  }
+  function commDelBtn(p, f) {
+    if (p.by === f.me) return '<button class="comm-link" data-comm-del="' + esc(p.id) + '">Delete</button>';
+    if (isCoach()) return '<button class="comm-link" data-comm-hide="' + esc(p.id) + '">Hide</button>';
+    return "";
+  }
+  function renderCommunity() {
+    var f = commFeed();
+    var html = '<section class="card comm-compose">' +
+      "<h2>Lift Club Community</h2>" +
+      '<p class="muted small">Share a win, ask a question or cheer someone on. Everyone training with ScoutCo can see what you post.</p>' +
+      '<textarea data-comm-new rows="3" maxlength="2000" placeholder="Share something with the Lift Club…">' + esc(state.commDraft) + "</textarea>" +
+      (state.commMsg ? '<p class="error small">' + esc(state.commMsg) + "</p>" : "") +
+      '<div class="comm-compose-row"><button class="btn primary" data-comm-post>Post</button></div>' +
+    "</section>";
+    if (!f.loaded && !f.tops.length) {
+      html += state.commErr ? '<p class="empty">' + esc(state.commErr) + "</p>" : '<div class="spinner" aria-label="Loading"></div>';
+    } else if (!f.tops.length) {
+      html += '<p class="empty">No posts yet. Be the first to say hi!</p>';
+    }
+    html += f.tops.map(function (p) {
+      var reps = f.replies[p.id] || [];
+      var open = state.commReply === p.id;
+      return '<article class="card comm-post' + (p.pending ? " pending" : "") + '">' +
+        commByline(p, f) +
+        '<p class="comm-text">' + esc(p.text) + "</p>" +
+        '<div class="comm-actions">' + COMM_REACTIONS.map(function (e) {
+          var n = p.counts[e] || 0, on = p.mine.indexOf(e) !== -1;
+          return '<button class="comm-react' + (on ? " on" : "") + '" data-comm-react="' + esc(p.id) + '" data-emoji="' + esc(e) + '" aria-pressed="' + on + '">' +
+            e + (n ? "<span>" + n + "</span>" : "") + "</button>";
+        }).join("") +
+          '<span class="comm-spacer"></span>' +
+          '<button class="comm-link" data-comm-reply="' + esc(p.id) + '">Reply</button>' + commDelBtn(p, f) +
+        "</div>" +
+        (reps.length || open ? '<div class="comm-replies">' + reps.map(function (r) {
+          return '<div class="comm-reply' + (r.pending ? " pending" : "") + '">' + commByline(r, f) +
+            '<p class="comm-text">' + esc(r.text) + "</p>" +
+            (commDelBtn(r, f) ? '<div class="comm-actions">' + commDelBtn(r, f) + "</div>" : "") + "</div>";
+        }).join("") +
+          (open ? '<div class="comm-reply-box"><textarea data-comm-reply-text="' + esc(p.id) + '" rows="2" maxlength="2000" placeholder="Write a reply…">' +
+            esc(state.commReplyDraft) + '</textarea><button class="btn primary small" data-comm-send-reply="' + esc(p.id) + '">Reply</button></div>' : "") +
+        "</div>" : "") +
+      "</article>";
+    }).join("");
+    $("communityPane").innerHTML = html;
+    markCommSeen();
+  }
+  function commSend(ev) {
+    if (!canSend()) { state.commMsg = "Posting works once you open the app with your own code."; render(); return false; }
+    ev.at = Date.now();
+    queue(ev);
+    return true;
+  }
+
   // A small card on the Program tab until they've filled in their profile.
   function renderProfileNudge() {
     var el = $("profileNudge");
@@ -1186,7 +1346,9 @@
       active.getAttribute("data-weight") != null ? "data-weight" :
       active.getAttribute("data-ci") != null ? "data-ci" :
       active.getAttribute("data-prof") != null ? "data-prof" :
-      active.getAttribute("data-todo-new") != null ? "data-todo-new" : null);
+      active.getAttribute("data-todo-new") != null ? "data-todo-new" :
+      active.getAttribute("data-comm-new") != null ? "data-comm-new" :
+      active.getAttribute("data-comm-reply-text") != null ? "data-comm-reply-text" : null);
     var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     renderAll();
@@ -1239,6 +1401,7 @@
     if (state.view === "site") renderSite();
     if (state.view === "profile") renderProfile();
     if (state.view === "clients") renderClients();
+    if (state.view === "community") renderCommunity();
     renderProfileNudge();
 
     var note = $("coachNote");
@@ -1446,9 +1609,60 @@
     var b = e.target.closest("[data-view]");
     if (!b) return;
     state.view = b.getAttribute("data-view");
+    if (state.view === "community") fetchCommunity();
     render();
     window.scrollTo(0, 0);
   });
+
+  $("communityPane").addEventListener("input", function (e) {
+    var t = e.target;
+    if (!t.getAttribute) return;
+    if (t.getAttribute("data-comm-new") != null) { state.commDraft = t.value; state.commMsg = ""; }
+    if (t.getAttribute("data-comm-reply-text") != null) state.commReplyDraft = t.value;
+  });
+  $("communityPane").addEventListener("click", function (e) {
+    var b;
+    if (e.target.closest("[data-comm-post]")) {
+      var text = state.commDraft.trim();
+      if (!text) { state.commMsg = "Type something first."; render(); return; }
+      if (commSend({ type: "post", text: text.slice(0, 2000) })) { state.commDraft = ""; state.commMsg = ""; render(); }
+      return;
+    }
+    if ((b = e.target.closest("[data-comm-react]"))) {
+      var id = b.getAttribute("data-comm-react"), emoji = b.getAttribute("data-emoji");
+      var p = commFeed().tops.filter(function (x) { return x.id === id; })[0];
+      if (p) { commSend({ type: "react", post: id, emoji: emoji, on: p.mine.indexOf(emoji) === -1 }); render(); }
+      return;
+    }
+    if ((b = e.target.closest("[data-comm-reply]"))) {
+      var rid = b.getAttribute("data-comm-reply");
+      if (state.commReply !== rid) { state.commReply = rid; state.commReplyDraft = ""; }
+      else state.commReply = null;
+      render();
+      var box = document.querySelector('[data-comm-reply-text="' + CSS.escape(rid) + '"]');
+      if (box) box.focus();
+      return;
+    }
+    if ((b = e.target.closest("[data-comm-send-reply]"))) {
+      var to = b.getAttribute("data-comm-send-reply"), reply = state.commReplyDraft.trim();
+      if (!reply) return;
+      if (commSend({ type: "post", text: reply.slice(0, 2000), parent: to })) { state.commReply = null; state.commReplyDraft = ""; render(); }
+      return;
+    }
+    if ((b = e.target.closest("[data-comm-del]"))) {
+      if (window.confirm("Delete your post?")) { commSend({ type: "unpost", post: b.getAttribute("data-comm-del") }); render(); }
+      return;
+    }
+    if ((b = e.target.closest("[data-comm-hide]"))) {
+      if (window.confirm("Hide this post from everyone? You can bring it back by unticking Hide on the Lift Club Community tab of your sheet.")) {
+        commSend({ type: "unpost", post: b.getAttribute("data-comm-hide") }); render();
+      }
+    }
+  });
+  // New posts show up while the Lift Club is open.
+  setInterval(function () {
+    if (state.view === "community" && document.visibilityState === "visible" && state.code) fetchCommunity();
+  }, 60000);
 
   $("checkinPane").addEventListener("click", function (e) {
     var sc = e.target.closest("[data-score]");
@@ -1636,13 +1850,13 @@
   document.addEventListener("click", function (e) {
     if (!e.target.closest("#menu")) closeMenu();
   });
-  $("refreshBtn").addEventListener("click", function () { closeMenu(); refresh(false); });
+  $("refreshBtn").addEventListener("click", function () { closeMenu(); refresh(false); if (state.view === "community") fetchCommunity(); });
   $("signOutBtn").addEventListener("click", function () { signOut(); });
   $("installMenuBtn").addEventListener("click", function () { closeMenu(); showInstall(true); });
 
   // Refresh when the app comes back to the foreground, so program edits show up.
   document.addEventListener("visibilitychange", function () {
-    if (document.visibilityState === "visible" && state.code && state.data) { refresh(true); flush(); }
+    if (document.visibilityState === "visible" && state.code && state.data) { refresh(true); flush(); if (state.view === "community") fetchCommunity(); }
   });
 
   // ---------- install to home screen ----------
@@ -1698,6 +1912,24 @@
     var d = addDays(todayDay(), days);
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   }
+  function demoCommunity() {
+    var h = 3600000, now = Date.now();
+    return {
+      me: "demo-me",
+      people: {
+        "demo-kirst": { name: COACH, photo: "", coach: true },
+        "demo-ali": { name: "Ali V.", photo: "", coach: false },
+        "demo-marty": { name: "Marty S.", photo: "", coach: false }
+      },
+      posts: [
+        { id: "d1", by: "demo-kirst", at: now - 26 * h, text: "Welcome to the Lift Club! Share your wins, ask questions and cheer each other on. 💜", parent: "", counts: { "❤️": 3, "💪": 2 }, mine: [] },
+        { id: "d2", by: "demo-ali", at: now - 3 * h, text: "New deadlift PB today, 120 kg! Couldn't have done it without this crew.", parent: "", counts: { "🔥": 4, "👏": 2 }, mine: ["🔥"] },
+        { id: "d3", by: "demo-marty", at: now - 2 * h, text: "Absolute weapon! Well done Ali", parent: "d2", counts: {}, mine: [] },
+        { id: "d4", by: "demo-kirst", at: now - 90 * 60000, text: "So proud of you. That lockout was clean!", parent: "d2", counts: {}, mine: [] }
+      ]
+    };
+  }
+
   function demoData() {
     function ex(label, name, sets, reps, load, rest, notes, video) {
       var x = { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
