@@ -472,3 +472,8 @@ button.comm-avatar { cursor: pointer; }
 .push-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .push-card > div { flex: 1 1 200px; }
 .push-card p { margin: 4px 0 0; }
+.push-pop-card { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 18px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.push-pop-card h2 { margin: 6px 0 8px; font-size: 20px; }
+.push-pop-card p { margin: 0 0 16px; }
+.push-pop-card .btn { display: block; width: 100%; margin-top: 8px; }
+.push-pop-bell { font-size: 40px; }
