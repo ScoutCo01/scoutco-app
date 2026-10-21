@@ -163,7 +163,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -480,7 +480,7 @@
 
   function viewList() {
     var v;
-    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"]];
+    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["profile", "Profile"]];
     else {
       v = [["program", "Program"]];
       if (isOnline()) v.push(["checkin", "Check-in"]);
@@ -494,7 +494,7 @@
     var views = viewList();
     if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
     var due = isOnline() && !checkinFor(thisWeekOf());
-    var profDue = !isCoach() && profileNeedsFilling();
+    var profDue = profileNeedsFilling();
     var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
@@ -508,6 +508,7 @@
     $("todoPane").classList.toggle("hidden", state.view !== "todo");
     $("sitePane").classList.toggle("hidden", state.view !== "site");
     $("profilePane").classList.toggle("hidden", state.view !== "profile");
+    $("clientsPane").classList.toggle("hidden", state.view !== "clients");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -516,7 +517,7 @@
     return list.filter(function (l) { return l && l.label && /^https?:\/\//.test(String(l.url || "")); });
   }
   function renderSite() {
-    $("sitePane").innerHTML = '<ul class="site-links">' + siteLinks().map(function (l) {
+    $("sitePane").innerHTML = coachCardHtml() + '<ul class="site-links">' + siteLinks().map(function (l) {
       return '<li><a class="site-link" href="' + esc(l.url) + '" target="_blank" rel="noopener">' +
         "<span>" + esc(l.label) + "</span>" +
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>' +
@@ -776,23 +777,27 @@
     { id: "bench", name: "Bench press" }
   ];
   var PROFILE_FIELDS = ["photo", "dob", "squat", "deadlift", "bench", "hobbies", "goals", "food"];
+  // Kirst's own profile (her Coach row). Clients see it on their ScoutCo HQ tab.
+  var COACH_FIELDS = ["photo", "about", "quals", "hobbies", "food"];
+  function profFields() { return isCoach() ? COACH_FIELDS : PROFILE_FIELDS; }
 
   function profileStore() { var s = load(KEY_PROFILE, null); return s && s.code === state.code ? s : { code: state.code, p: {}, pbs: [] }; }
   function getProfile() { return profileStore().p || {}; }
   function getPbs() { return profileStore().pbs || []; }
   function saveProfileStore(p, pbs) { save(KEY_PROFILE, { code: state.code, p: p, pbs: pbs || getPbs() }); }
-  function profileWaiting() { return load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile" || x.type === "pb"; }); }
+  function profileWaiting() { return load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile" || x.type === "coachprofile" || x.type === "pb"; }); }
   function safePhoto(u) { u = String(u || ""); return /^data:image\/(jpeg|png|webp);base64,[a-z0-9+\/=]+$/i.test(u) ? u : ""; }
-  function hasProfileData(p) { return PROFILE_FIELDS.some(function (f) { return String(p[f] || "").trim() !== ""; }); }
+  function hasProfileData(p) { return profFields().some(function (f) { return String(p[f] || "").trim() !== ""; }); }
   // The Profile tab gets a dot until they've told Kirst the basics.
   function profileNeedsFilling() {
     var p = getProfile();
+    if (isCoach()) return !p.photo || !String(p.about || "").trim();
     return !p.dob || !String(p.goals || "").trim() || !LIFTS.some(function (l) { return kgOf(p[l.id]); });
   }
 
   // The sheet's copy wins, unless the phone has changes it hasn't sent yet.
   function mergeProfile(data) {
-    if (!data || !state.code || isCoach() || !("profile" in data)) return; // older script: keep what's on the phone
+    if (!data || !state.code || !("profile" in data)) return; // older script: keep what's on the phone
     var mine = profileStore();
     var pbs = Array.isArray(data.pbs) ? data.pbs : mine.pbs;
     if (profileWaiting()) { saveProfileStore(mine.p, mine.pbs.length >= pbs.length ? mine.pbs : pbs); return; }
@@ -803,16 +808,17 @@
       return;
     }
     var p = {};
-    PROFILE_FIELDS.forEach(function (f) { p[f] = String(data.profile[f] == null ? "" : data.profile[f]); });
+    profFields().forEach(function (f) { p[f] = String(data.profile[f] == null ? "" : data.profile[f]); });
     p.at = +data.profile.at || 0;
-    var draft = state.prof, dirty = draft && PROFILE_FIELDS.some(function (f) { return String(draft[f] || "") !== String(mine.p[f] || ""); });
+    var draft = state.prof, dirty = draft && profFields().some(function (f) { return String(draft[f] || "") !== String(mine.p[f] || ""); });
     saveProfileStore(p, pbs);
     if (!dirty) state.prof = null; // don't throw away something they're halfway through typing
   }
 
   function queueProfile(p) {
     var ev = { type: "profile", key: "profile" };
-    PROFILE_FIELDS.forEach(function (f) { ev[f] = p[f] || ""; });
+    if (isCoach()) ev.type = "coachprofile";
+    profFields().forEach(function (f) { ev[f] = p[f] || ""; });
     queue(ev);
   }
 
@@ -931,13 +937,14 @@
   }
 
   function renderProfile() {
+    if (isCoach()) { renderCoachProfile(); return; }
     var client = (state.data && state.data.client) || {};
     var saved = getProfile();
     if (!state.prof) state.prof = Object.assign({}, saved);
     var d = state.prof;
     var photo = safePhoto(d.photo);
-    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile"; });
-    var dirty = PROFILE_FIELDS.some(function (f) { return f !== "photo" && String(d[f] || "") !== String(saved[f] || ""); });
+    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile" || x.type === "coachprofile"; });
+    var dirty = profFields().some(function (f) { return f !== "photo" && String(d[f] || "") !== String(saved[f] || ""); });
     var status = state.profMsg || (dirty ? "" : pending && canSend() ? "Saving…" : saved.at ? "Saved ✓" : "");
     var field = function (id, label, html) {
       return '<label class="ci-label" for="pf-' + id + '">' + label + "</label>" + html;
@@ -991,6 +998,16 @@
   function saveProfile() {
     var d = state.prof || {};
     var p = Object.assign({}, getProfile());
+    if (isCoach()) {
+      ["about", "quals", "hobbies", "food"].forEach(function (f) { p[f] = String(d[f] || "").trim().slice(0, 2000); });
+      p.at = Date.now();
+      saveProfileStore(p);
+      queueProfile(p);
+      state.prof = null;
+      state.profMsg = "";
+      render();
+      return;
+    }
     ["dob", "hobbies", "goals", "food"].forEach(function (f) { p[f] = String(d[f] || "").trim().slice(0, 1000); });
     LIFTS.forEach(function (l) { var kg = kgOf(d[l.id]); p[l.id] = kg ? String(kg) : ""; });
     if (p.dob && !/^\d{4}-\d{2}-\d{2}$/.test(p.dob)) p.dob = "";
@@ -1002,12 +1019,134 @@
     render();
   }
 
+  // ---------- Kirst's profile, as clients see it ----------
+  // On Kirst's own phone this is what she's typed (even before it reaches the sheet).
+  function coachInfo() {
+    if (isCoach()) return getProfile();
+    return (state.data && state.data.coach) || {};
+  }
+  function coachCardHtml() {
+    var c = coachInfo(), photo = safePhoto(c.photo);
+    var rows = [["about", ""], ["quals", "Qualifications and experience"], ["hobbies", "Hobbies and interests"], ["food", "Favourite food"]]
+      .filter(function (r) { return String(c[r[0]] || "").trim(); });
+    if (!photo && !rows.length) return "";
+    return '<section class="card coach-card">' +
+      '<div class="coach-card-head">' + (photo ? '<img class="coach-card-photo" src="' + esc(photo) + '" alt="' + esc(COACH) + '">' : "") +
+        '<div><div class="small muted">Your coach</div><h2>' + esc(COACH) + "</h2></div></div>" +
+      rows.map(function (r) {
+        return (r[1] ? "<h4>" + esc(r[1]) + "</h4>" : "") + '<p class="coach-card-text">' + esc(c[r[0]]) + "</p>";
+      }).join("") +
+      (isCoach() ? '<p class="muted small">This is how clients see you on their ScoutCo HQ tab.</p>' : "") +
+    "</section>";
+  }
+
+  function renderCoachProfile() {
+    var saved = getProfile();
+    if (!state.prof) state.prof = Object.assign({}, saved);
+    var d = state.prof, photo = safePhoto(d.photo);
+    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "coachprofile"; });
+    var dirty = COACH_FIELDS.some(function (f) { return f !== "photo" && String(d[f] || "") !== String(saved[f] || ""); });
+    var status = state.profMsg || (dirty ? "" : pending && canSend() ? "Saving…" : saved.at ? "Saved ✓" : "");
+    var area = function (id, label, placeholder, rows) {
+      return '<label class="ci-label" for="pf-' + id + '">' + label + "</label>" +
+        '<textarea id="pf-' + id + '" class="ci-input" data-prof="' + id + '" rows="' + rows + '" maxlength="2000" placeholder="' + esc(placeholder) + '">' + esc(d[id] || "") + "</textarea>";
+    };
+    $("profilePane").innerHTML =
+      '<section class="card profile-head">' +
+        '<label class="avatar' + (photo ? "" : " empty") + '" for="pf-photo" aria-label="' + (photo ? "Change" : "Add") + ' your photo">' +
+          (photo ? '<img src="' + esc(photo) + '" alt="">' : "<span>" + esc(initials(COACH)) + "</span>") +
+          '<em aria-hidden="true">📷</em>' +
+        "</label>" +
+        '<input id="pf-photo" class="sr-only" type="file" accept="image/*" data-prof-photo>' +
+        '<div class="profile-who"><h2>' + esc(COACH) + '</h2><span class="type-badge">Coach</span>' +
+          '<div class="small muted">' + (photo ? '<button class="link-btn" data-prof-photo-del>Remove photo</button>' : "Tap the circle to add a photo") + "</div>" +
+        "</div>" +
+      "</section>" +
+      '<section class="card">' +
+        "<h3>About you</h3>" +
+        '<p class="muted small">Clients see this on their ScoutCo HQ tab, and your photo shows on your notes to them.</p>' +
+        area("about", "About me", "A few lines about you and how you coach", 5) +
+        area("quals", "Qualifications and experience", "e.g. Cert IV Fitness, remedial massage, 10 years coaching", 3) +
+        area("hobbies", "Hobbies and interests", "What you love doing outside the gym", 3) +
+        '<label class="ci-label" for="pf-food">Favourite food</label>' +
+        '<input id="pf-food" class="ci-input" data-prof="food" type="text" maxlength="200" autocomplete="off" value="' + esc(d.food || "") + '">' +
+        '<div class="ci-actions"><span class="small muted">' + esc(status) + "</span>" +
+          '<button class="btn primary" data-prof-save>Save profile</button></div>' +
+      "</section>" +
+      (coachCardHtml() ? '<h3 class="section-title">Preview</h3>' + coachCardHtml() : "");
+  }
+
+  // ---------- Kirst's Clients tab: every client's profile ----------
+  function ageFrom(dob) {
+    var d = parseDay(dob); if (!d) return null;
+    var t = todayDay(), a = t.getFullYear() - d.getFullYear();
+    if (t < new Date(t.getFullYear(), d.getMonth(), d.getDate())) a--;
+    return a;
+  }
+  // Days until their next birthday (0 = today), or null.
+  function daysToBirthday(dob) {
+    var d = parseDay(dob); if (!d) return null;
+    var t = todayDay(), next = new Date(t.getFullYear(), d.getMonth(), d.getDate());
+    if (next < t) next = new Date(t.getFullYear() + 1, d.getMonth(), d.getDate());
+    return Math.round((next - t) / 864e5);
+  }
+  function renderClients() {
+    var list = (state.data && state.data.clients) || null;
+    if (!list) {
+      $("clientsPane").innerHTML = '<p class="empty">Client profiles show here once the updated script is in your sheet.</p>';
+      return;
+    }
+    if (!list.length) {
+      $("clientsPane").innerHTML = '<p class="empty">No active clients yet.</p>';
+      return;
+    }
+    var filled = list.filter(function (c) { return c.at; }).length;
+    $("clientsPane").innerHTML = '<p class="muted small clients-sum">' + filled + " of " + list.length + " clients have filled in their profile.</p>" +
+      list.map(function (c) {
+        var photo = safePhoto(c.photo), age = ageFrom(c.dob), bday = daysToBirthday(c.dob);
+        var dob = parseDay(c.dob);
+        var facts = [];
+        if (age != null) facts.push(age + " years old");
+        if (dob) facts.push("Birthday " + dob.toLocaleDateString("en-AU", { day: "numeric", month: "long" }));
+        var rms = LIFTS.map(function (l) {
+          return "<div><b>" + (kgOf(c[l.id]) ? esc(kgText(kgOf(c[l.id]))) : "–") + "</b><span>" + esc(l.name) + "</span></div>";
+        }).join("");
+        var text = [["goals", "Goals"], ["hobbies", "Hobbies and interests"], ["food", "Favourite food"]].filter(function (r) { return String(c[r[0]] || "").trim(); })
+          .map(function (r) { return "<h4>" + esc(r[1]) + '</h4><p class="coach-card-text">' + esc(c[r[0]]) + "</p>"; }).join("");
+        var pbs = (c.pbs || []).slice(0, 3);
+        return '<details class="card client-card">' +
+          "<summary>" +
+            '<span class="mini-avatar">' + (photo ? '<img src="' + esc(photo) + '" alt="">' : esc(initials(c.name))) + "</span>" +
+            '<span class="client-who"><b>' + esc(c.name) + "</b>" +
+              '<small class="muted">' + esc([c.type, age != null ? age + " yrs" : ""].filter(Boolean).join(" · ")) + "</small></span>" +
+            (bday != null && bday <= 7 ? '<span class="bday" title="Birthday soon">🎂 ' + (bday === 0 ? "Today" : bday === 1 ? "Tomorrow" : "in " + bday + " days") + "</span>" : "") +
+            (!c.at ? '<span class="pill">Not filled in</span>' : "") +
+          "</summary>" +
+          '<div class="client-body">' +
+            (facts.length ? '<p class="muted small">' + esc(facts.join(" · ")) + "</p>" : "") +
+            '<div class="stat-row">' + rms + "</div>" +
+            text +
+            (pbs.length ? "<h4>Latest PBs</h4><ul class=\"pb-list\">" + pbs.map(function (b) {
+              return "<li><span>🏆 " + esc(b.lift) + " " + esc(kgText(+b.kg)) + "</span><small class=\"muted\">" +
+                (b.at ? esc(new Date(+b.at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })) : "") + "</small></li>";
+            }).join("") + "</ul>" : "") +
+            (!c.at ? '<p class="muted small">They haven\'t filled in their profile yet.</p>' : "") +
+          "</div>" +
+        "</details>";
+      }).join("");
+  }
+
   // A small card on the Program tab until they've filled in their profile.
   function renderProfileNudge() {
     var el = $("profileNudge");
-    var showIt = !isCoach() && state.data && profileNeedsFilling() && !hasProfileData(getProfile());
+    var showIt = state.data && profileNeedsFilling() && !hasProfileData(getProfile());
     el.classList.toggle("hidden", !showIt);
     if (!showIt) return;
+    if (isCoach()) {
+      el.innerHTML = "<div><strong>Set up your coach profile</strong><div>Add a photo and a bit about you. Clients see it on their ScoutCo HQ tab.</div></div>" +
+        '<button class="btn primary" data-goto-profile>Set up my profile</button>';
+      return;
+    }
     el.innerHTML = "<div><strong>Tell " + esc(COACH) + " about you</strong>" +
       "<div>Add a photo, your 1RMs, goals and favourite food. Takes 2 minutes.</div></div>" +
       '<button class="btn primary" data-goto-profile>Fill in my profile</button>';
@@ -1038,7 +1177,7 @@
     var weeks = currentWeeks();
 
     $("helloName").textContent = client.name ? "Hi " + String(client.name).split(" ")[0] : "Your program";
-    var myPhoto = isCoach() ? "" : safePhoto(getProfile().photo);
+    var myPhoto = safePhoto(getProfile().photo);
     $("helloPhoto").innerHTML = myPhoto ? '<img src="' + esc(myPhoto) + '" alt="">' : "";
     $("helloPhoto").classList.toggle("hidden", !myPhoto);
     $("updatedAt").textContent = data.updated
@@ -1067,11 +1206,13 @@
     if (state.view === "todo") renderTodo();
     if (state.view === "site") renderSite();
     if (state.view === "profile") renderProfile();
+    if (state.view === "clients") renderClients();
     renderProfileNudge();
 
     var note = $("coachNote");
     if (client.message) {
-      note.innerHTML = "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
+      var cPhoto = isCoach() ? "" : safePhoto(coachInfo().photo);
+      note.innerHTML = (cPhoto ? '<img class="note-photo" src="' + esc(cPhoto) + '" alt="">' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");
