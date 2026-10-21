@@ -433,3 +433,38 @@ input[type="date"].ci-input { min-height: 44px; color-scheme: dark; }
 .coach-pop-card .coach-card { margin: 0 0 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 .coach-pop-card .btn { width: 100%; }
 @media (prefers-reduced-motion: reduce) { .coach-pop-card { animation: none; } }
+
+/* Lift Club Community */
+.comm-compose textarea, .comm-reply-box textarea {
+  width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; resize: vertical; margin-top: 8px;
+}
+.comm-compose textarea:focus, .comm-reply-box textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.comm-compose-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+.comm-compose .error { margin: 8px 0 0; }
+#communityPane .spinner { margin: 30px auto; }
+.comm-post.pending, .comm-reply.pending { opacity: .7; }
+.comm-head { display: flex; align-items: center; gap: 10px; }
+.comm-avatar { border: 0; padding: 0; font: inherit; color: inherit; cursor: default; }
+button.comm-avatar { cursor: pointer; }
+.comm-who { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.comm-who b { font-size: 15px; }
+.comm-who small { flex-basis: 100%; font-size: 12px; }
+.comm-coach { font-size: 11px; padding: 1px 8px; margin: 0; }
+.comm-text { margin: 10px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.comm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.comm-spacer { flex: 1; }
+.comm-react {
+  display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); border-radius: 999px; padding: 5px 10px; font-size: 16px; line-height: 1; cursor: pointer;
+}
+.comm-react span { font-size: 13px; font-weight: 700; color: var(--muted); }
+.comm-react.on { border-color: var(--accent); background: rgba(139, 92, 246, .22); }
+.comm-react.on span { color: var(--text); }
+.comm-link { border: 0; background: none; color: var(--accent-strong); font: inherit; font-size: 14px; font-weight: 600; padding: 6px 4px; cursor: pointer; }
+.comm-replies { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 4px; }
+.comm-reply { padding: 10px 0 2px 14px; border-left: 2px solid var(--border); margin-top: 8px; }
+.comm-reply .comm-actions { margin-top: 4px; }
+.comm-reply .comm-text { margin-top: 6px; font-size: 15px; }
+.comm-reply-box { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-top: 10px; }
+.comm-reply .mini-avatar { width: 36px; height: 36px; font-size: 13px; }

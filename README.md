@@ -190,3 +190,13 @@ Your own coach app (the Clients row with Type "Coach") has two extra tabs:
 
 - **Profile**: your photo, About me, qualifications and experience, hobbies and interests, and favourite food. Clients see this as a "Your coach" card at the top of their **ScoutCo HQ** tab. Your photo also sits at the top right of their app and on your "From Kirst" notes and check-in replies; tapping it opens your profile. It's saved on the **Coach profile** tab of the sheet, where you can also type it directly.
 - **Clients**: every active client's profile: photo, type, age and birthday (with a 🎂 when it's within a week), their 1RMs, goals, hobbies, favourite food and latest PBs. Tap a client to open their card.
+
+## Lift Club Community
+
+Every client and coach has a **Lift Club Community** tab in their app. They can post, react (💪 🔥 👏 ❤️) and reply. Posts show each person's first name and last initial (coaches show their first name with a Coach badge) and their profile photo. A dot on the tab means there's a new post.
+
+- Turn it on: ScoutCo menu → **Set up Lift Club Community** (the tab is also made by itself the first time someone posts).
+- Every post and reply lands on the **Lift Club Community** tab of the sheet, and you get an email when a client posts.
+- To take a post down, tick its **Hide** box (untick to bring it back), tap **Hide** on the post in your coach app, or delete the row. Hiding a post hides its replies too.
+- Clients can delete their own posts. Those rows stay on the sheet with "(deleted it)" after their name.
+- The app shows the newest 60 posts.

@@ -17,6 +17,7 @@
  *   Home swaps: Exercise | Home swap | How to do it | Video. What clients can do at home instead (ScoutCo → Set up home swaps)
  *   Profiles: one row per client. Name and Type come from Clients; the client fills in photo, 1RMs, DOB, goals and so on in the app
  *   Coach profile: your own photo and bio (filled in from the Profile tab of your coach app). Clients see it in their app
+ *   Lift Club Community: posts, replies and reactions from every client and coach. Tick Hide to take one down
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
@@ -65,6 +66,9 @@ function doGet(e) {
     return json_({ error: "That code wasn't recognised. Check it with Kirst." });
   }
 
+  // The Lift Club Community tab loads on its own, so the program stays quick to open.
+  if (e.parameter.community) return json_(communityFeed_(ss, code));
+
   try { recordOpen_(ss, code); } catch (err) { /* the program still loads */ }
 
   var programName = String(client.Program || client.Name || "").trim();
@@ -91,6 +95,7 @@ function doGet(e) {
     coach: isCoach_(client.Type) ? undefined : safely_(function () { return coachProfile_(ss); }, null),
     clients: isCoach_(client.Type) ? safely_(function () { return clientProfiles_(ss); }, []) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
+    community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0) },
     updated: new Date().toISOString()
   });
 }
@@ -342,7 +347,7 @@ function doPost(e) {
   if (!client) return json_({ error: "That code wasn't recognised." });
 
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [], checkins = [];
+  var done = [], comments = [], checkins = [], community = [], posted = [];
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -435,6 +440,8 @@ function doPost(e) {
         if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
+      } else if (ev.type === "post" || ev.type === "react" || ev.type === "unpost") {
+        community.push(ev); // saved together below, in the order they were sent
       } else if (ev.type === "comment") {
         var text = clip_(ev.text, 2000).trim();
         if (text && fbIds.indexOf(String(ev.id)) === -1) {
@@ -445,12 +452,14 @@ function doPost(e) {
       }
       done.push(ev.id);
     });
+    if (community.length) posted = saveCommunity_(ss, client, community);
   } finally {
     lock.releaseLock();
   }
 
   if (comments.length) notify_(ss, client, comments);
   if (checkins.length) notifyCheckin_(ss, client, checkins);
+  if (posted.length) notifyCommunity_(ss, client, posted);
   return json_({ ok: true, saved: done });
 }
 
@@ -630,6 +639,7 @@ function onOpen() {
     .addItem("Set up to-do list", "setupTodo")
     .addItem("Set up home swaps", "setupHomeSwaps")
     .addItem("Set up client profiles", "setupProfiles")
+    .addItem("Set up Lift Club Community", "setupCommunity")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -1691,4 +1701,200 @@ function clientProfiles_(ss) {
   });
   out.forEach(function (row) { row.pbs.sort(function (a, b) { return b.at - a.at; }); row.pbs = row.pbs.slice(0, 5); });
   return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Lift Club Community: a board where every client and coach can post, */
+/* react and reply. Tick "Hide" on the tab to take a post down.        */
+/* ------------------------------------------------------------------ */
+
+var COMMUNITY_TAB = "Lift Club Community";
+var COMMUNITY_HEADERS = ["Posted", "From", "Post", "Replying to", "Hide", "Reactions", "ID", "Reply to ID", "Reaction data", "Code"];
+var COMMUNITY_REACTIONS = ["💪", "🔥", "👏", "❤️"];
+var COMMUNITY_SHOW = 60; // newest posts sent to the app (each with all its replies)
+// [column, 1-based]. The tab is created with these, in this order.
+var CC = { at: 1, from: 2, text: 3, replyTo: 4, hide: 5, reactions: 6, id: 7, parent: 8, data: 9, code: 10 };
+
+/** The Lift Club Community tab, created the first time it's needed. */
+function communityTab_(ss) {
+  var sheet = ss.getSheetByName(COMMUNITY_TAB);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(COMMUNITY_TAB);
+  sheet.appendRow(COMMUNITY_HEADERS);
+  styleHeader_(sheet, COMMUNITY_HEADERS.length);
+  sheet.setColumnWidth(CC.at, 130);
+  sheet.setColumnWidth(CC.from, 130);
+  sheet.setColumnWidth(CC.text, 420);
+  sheet.setColumnWidth(CC.replyTo, 220);
+  sheet.setColumnWidth(CC.hide, 60);
+  sheet.setColumnWidth(CC.reactions, 140);
+  sheet.getRange(2, CC.at, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  sheet.getRange(2, CC.text, sheet.getMaxRows() - 1, 2).setWrap(true);
+  sheet.getRange(1, CC.hide).setBackground("#fecaca").setNote("Tick to hide a post (and its replies) from everyone. Untick to bring it back.");
+  sheet.hideColumns(CC.id, 4); // ID, Reply to ID, Reaction data, Code: the app needs these, you don't
+  return sheet;
+}
+
+/** A private, random salt so the app can tell people apart without ever seeing anyone's code. */
+function communitySalt_() {
+  var props = PropertiesService.getScriptProperties();
+  var salt = props.getProperty("communitySalt");
+  if (!salt) { salt = Utilities.getUuid(); props.setProperty("communitySalt", salt); }
+  return salt;
+}
+function personId_(code, salt) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + "|" + normalise_(code));
+  return bytes.slice(0, 8).map(function (b) { return ((b + 256) % 256).toString(16).replace(/^(.)$/, "0$1"); }).join("");
+}
+
+/** The name shown on posts: first name and last initial ("Ali V."). Coaches show their first name. */
+function communityName_(client) {
+  var parts = String(client.Name || "").trim().split(/\s+/).filter(String);
+  if (!parts.length) return isCoach_(client.Type) ? "Coach" : "ScoutCo member";
+  var first = parts[0];
+  if (isCoach_(client.Type)) return /^kirst/i.test(first) ? "Kirst" : first;
+  return first + (parts.length > 1 ? " " + parts[parts.length - 1].charAt(0).toUpperCase() + "." : "");
+}
+
+function reactionData_(v) {
+  try { var o = JSON.parse(String(v || "{}")); return o && typeof o === "object" ? o : {}; } catch (err) { return {}; }
+}
+function reactionSummary_(data) {
+  return COMMUNITY_REACTIONS.filter(function (e) { return (data[e] || []).length; })
+    .map(function (e) { return e + " " + data[e].length; }).join("  ");
+}
+
+/** Every row on the tab: [{ row, at, text, hide, id, parent, data, code }]. */
+function communityRows_(sheet) {
+  var last = sheet.getLastRow();
+  if (last < 2) return [];
+  return sheet.getRange(2, 1, last - 1, COMMUNITY_HEADERS.length).getValues().map(function (r, i) {
+    return { row: i + 2, at: r[CC.at - 1] instanceof Date ? r[CC.at - 1].getTime() : 0, from: text_(r[CC.from - 1]),
+      text: text_(r[CC.text - 1]).replace(/^'/, ""), hide: isTicked_(r[CC.hide - 1]), id: text_(r[CC.id - 1]),
+      parent: text_(r[CC.parent - 1]), data: reactionData_(r[CC.data - 1]), code: normalise_(r[CC.code - 1]) };
+  }).filter(function (p) { return p.id && p.text; });
+}
+
+/** What the Lift Club Community tab in the app shows: the newest posts, their replies, and who wrote them. */
+function communityFeed_(ss, code) {
+  var sheet = ss.getSheetByName(COMMUNITY_TAB);
+  var salt = communitySalt_();
+  var me = personId_(code, salt);
+  if (!sheet) return { me: me, posts: [], people: {} };
+
+  var all = communityRows_(sheet);
+  var visible = {};
+  all.forEach(function (p) { if (!p.hide && !p.parent) visible[p.id] = p; });
+  var tops = Object.keys(visible).map(function (k) { return visible[k]; })
+    .sort(function (a, b) { return b.at - a.at; }).slice(0, COMMUNITY_SHOW);
+  var shown = {};
+  tops.forEach(function (p) { shown[p.id] = true; });
+  var replies = all.filter(function (p) { return !p.hide && p.parent && shown[p.parent]; });
+
+  // Names and photos, looked up now so a new photo shows on old posts too.
+  var clients = {}, profiles = safely_(function () { return profilesByCode_(ss); }, {});
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) { if (normalise_(c.Code)) clients[normalise_(c.Code)] = c; });
+  var coachPhoto = null;
+  var people = {}, ids = {};
+  var item = function (p) {
+    var pid = ids[p.code] || (ids[p.code] = personId_(p.code, salt));
+    if (!people[pid]) {
+      var c = clients[p.code], coach = !!(c && isCoach_(c.Type)), photo = "";
+      if (coach) {
+        if (coachPhoto === null) coachPhoto = safely_(function () { return (coachProfile_(ss) || {}).photo || ""; }, "");
+        photo = coachPhoto;
+      } else if (c && profiles[p.code]) photo = profiles[p.code].photo || "";
+      people[pid] = { name: c ? communityName_(c) : (p.from || "ScoutCo member"), photo: photo, coach: coach };
+    }
+    var counts = {}, mine = [];
+    COMMUNITY_REACTIONS.forEach(function (e) {
+      var who = p.data[e] || [];
+      if (who.length) counts[e] = who.length;
+      if (who.indexOf(me) !== -1) mine.push(e);
+    });
+    return { id: p.id, by: pid, at: p.at, text: p.text, parent: p.parent || "", counts: counts, mine: mine };
+  };
+  return { me: me, posts: tops.map(item).concat(replies.map(item)), people: people, reactions: COMMUNITY_REACTIONS };
+}
+
+/** When the newest post (not your own) went up, so the app can put a dot on the tab. */
+function communityLatest_(ss, code) {
+  var sheet = ss.getSheetByName(COMMUNITY_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  var last = sheet.getLastRow(), from = Math.max(2, last - 49);
+  var latest = 0;
+  sheet.getRange(from, 1, last - from + 1, COMMUNITY_HEADERS.length).getValues().forEach(function (r) {
+    var at = r[CC.at - 1] instanceof Date ? r[CC.at - 1].getTime() : 0;
+    if (at > latest && !isTicked_(r[CC.hide - 1]) && normalise_(r[CC.code - 1]) !== code) latest = at;
+  });
+  return latest;
+}
+
+/**
+ * Saves the app's community events: "post" (a post or a reply), "react" (tap an emoji) and "unpost"
+ * (someone deletes their own post, or a coach hides any post). Returns the new posts, for the email.
+ */
+function saveCommunity_(ss, client, events) {
+  var sheet = communityTab_(ss);
+  var rows = communityRows_(sheet);
+  var byId = {};
+  rows.forEach(function (p) { byId[p.id] = p; });
+  var code = normalise_(client.Code), me = personId_(code, communitySalt_());
+  var name = communityName_(client), coach = isCoach_(client.Type);
+  var posted = [];
+  events.forEach(function (ev) {
+    if (ev.type === "post") {
+      var id = clip_(ev.id, 40), text = clip_(ev.text, 2000).trim();
+      if (!text || byId[id]) return; // empty, or already saved
+      var parent = byId[clip_(ev.parent, 40)];
+      if (ev.parent && (!parent || parent.parent)) parent = null; // replies go on top-level posts only
+      if (ev.parent && !parent) return;
+      var row = [new Date(), cell_(name), cell_(text), parent ? cell_(parent.from + ": " + clip_(parent.text, 60) + (parent.text.length > 60 ? "…" : "")) : "",
+        false, "", id, parent ? parent.id : "", "{}", code];
+      sheet.appendRow(row);
+      var at = sheet.getLastRow();
+      sheet.getRange(at, CC.hide).insertCheckboxes();
+      byId[id] = { row: at, id: id, text: text, from: name, parent: parent ? parent.id : "", data: {}, code: code };
+      posted.push({ text: text, reply: parent ? parent.from + ": " + clip_(parent.text, 80) : "" });
+    } else if (ev.type === "react") {
+      var p = byId[clip_(ev.post, 40)], e = String(ev.emoji || "");
+      if (!p || COMMUNITY_REACTIONS.indexOf(e) === -1) return;
+      var who = (p.data[e] || []).filter(function (x) { return x !== me; });
+      if (ev.on) who.push(me);
+      if (who.length) p.data[e] = who; else delete p.data[e];
+      sheet.getRange(p.row, CC.reactions).setValue(reactionSummary_(p.data));
+      sheet.getRange(p.row, CC.data).setValue(JSON.stringify(p.data));
+    } else if (ev.type === "unpost") {
+      var q = byId[clip_(ev.post, 40)];
+      if (!q || (q.code !== code && !coach)) return; // clients can only delete their own posts
+      sheet.getRange(q.row, CC.hide).setValue(true);
+      if (q.code === code) sheet.getRange(q.row, CC.from).setValue(cell_(q.from + " (deleted it)"));
+    }
+  });
+  return posted;
+}
+
+/** Emails you when a client posts, so you always know what's going up. */
+function notifyCommunity_(ss, client, posts) {
+  if (!posts.length || isCoach_(client.Type)) return;
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (!to) return;
+    var lines = posts.map(function (p) { return (p.reply ? "Reply to " + p.reply + "\n" : "") + p.text; });
+    MailApp.sendEmail(to, "ScoutCo: Lift Club Community post from " + communityName_(client),
+      lines.join("\n\n") + "\n\nTo take a post down, tick Hide on the Lift Club Community tab (or tap Hide in your coach app):\n" + ss.getUrl());
+  } catch (err) { /* email is a bonus; the post is already saved */ }
+}
+
+/** ScoutCo menu: makes the Lift Club Community tab. */
+function setupCommunity() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = communityTab_(ss);
+  communitySalt_();
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Done! The Lift Club Community tab is ready.\n\n" +
+    "Every client and coach now has a Lift Club Community tab in their app where they can post, react and reply. " +
+    "Each post shows up here, and you get an email when a client posts.\n\n" +
+    "To take a post down, tick its Hide box (untick to bring it back), or tap Hide on the post in your coach app. " +
+    "You can also delete the row.");
 }
