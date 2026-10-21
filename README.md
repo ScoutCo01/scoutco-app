@@ -200,3 +200,9 @@ Every client and coach has a **Lift Club Community** tab in their app. They can 
 - To take a post down, tick its **Hide** box (untick to bring it back), tap **Hide** on the post in your coach app, or delete the row. Hiding a post hides its replies too.
 - Clients can delete their own posts. Those rows stay on the sheet with "(deleted it)" after their name.
 - The app shows the newest 60 posts.
+
+### Lift Club notifications (OneSignal, free)
+
+People can get a phone notification when someone posts in the Lift Club (everyone except the person who posted) or replies to a post they're in. Each person turns them on or off with the 🔔 Notifications card on their Lift Club Community or Profile tab. The yellow dot on the tab shows either way. On iPhone, notifications only work once the app is added to the home screen and opened from there.
+
+Setup: make a free OneSignal account and a Web app for `https://scoutco01.github.io` (Custom Code setup). Then ScoutCo menu → **Set up push notifications**, paste the **OneSignal App ID** and **OneSignal API key** on the Settings tab, and use **Send me a test notification** to check. The API key stays in your sheet. The app only gets the App ID.

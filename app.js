@@ -142,6 +142,7 @@
       state.week = pick(currentWeeks(), state.week, load(KEY_WEEK, null));
     }
     $("offlineNotice").classList.toggle("hidden", !offline);
+    try { initPush(); } catch (e) { /* the app works without notifications */ }
     render();
     show("programView");
     maybeShowInstall();
@@ -1282,7 +1283,7 @@
       '<textarea data-comm-new rows="3" maxlength="2000" placeholder="Share something with the Lift Club…">' + esc(state.commDraft) + "</textarea>" +
       (state.commMsg ? '<p class="error small">' + esc(state.commMsg) + "</p>" : "") +
       '<div class="comm-compose-row"><button class="btn primary" data-comm-post>Post</button></div>' +
-    "</section>";
+    "</section>" + pushCardHtml();
     if (!f.loaded && !f.tops.length) {
       html += state.commErr ? '<p class="empty">' + esc(state.commErr) + "</p>" : '<div class="spinner" aria-label="Loading"></div>';
     } else if (!f.tops.length) {
@@ -1321,6 +1322,81 @@
     queue(ev);
     return true;
   }
+
+
+  // ---------- push notifications (OneSignal) ----------
+  // Only switched on once Kirst puts her OneSignal App ID on the Settings tab of the sheet.
+  // OneSignal's worker lives in push/onesignal/ so it doesn't get in the way of the app's own sw.js.
+  var push = { started: false, ready: false, supported: false, on: false, busy: false, failed: false, os: null };
+  function pushAppId() { return String(((state.data || {}).settings || {}).pushAppId || "").trim(); }
+  function initPush() {
+    var appId = pushAppId(), me = ((state.data || {}).community || {}).me;
+    if (!appId || !me || push.started || !canSend()) return;
+    push.started = true;
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    var s = document.createElement("script");
+    s.src = "https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js";
+    s.defer = true;
+    s.onerror = function () { push.failed = true; render(); };
+    document.head.appendChild(s);
+    var base = location.pathname.replace(/[^\/]*$/, ""); // e.g. "/scoutco-app/"
+    window.OneSignalDeferred.push(function (OneSignal) {
+      return OneSignal.init({
+        appId: appId,
+        serviceWorkerPath: base.slice(1) + "push/onesignal/OneSignalSDKWorker.js",
+        serviceWorkerParam: { scope: base + "push/onesignal/" }
+      }).then(function () {
+        return OneSignal.login(me); // the same id the sheet sends notifications to (never their code)
+      }).then(function () {
+        push.os = OneSignal;
+        push.supported = OneSignal.Notifications.isPushSupported();
+        push.on = !!OneSignal.User.PushSubscription.optedIn;
+        push.ready = true;
+        OneSignal.User.PushSubscription.addEventListener("change", function (e) {
+          push.on = !!(e && e.current && e.current.optedIn);
+          render();
+        });
+        render();
+      }).catch(function () { push.failed = true; render(); });
+    });
+  }
+  function togglePush() {
+    var OS = push.os;
+    if (!OS || push.busy) return;
+    push.busy = true; render();
+    var p = push.on ? OS.User.PushSubscription.optOut() :
+      Promise.resolve(OS.Notifications.permission ? null : OS.Notifications.requestPermission())
+        .then(function () { return OS.User.PushSubscription.optIn(); });
+    Promise.resolve(p).catch(function () { /* they said no */ }).then(function () {
+      push.on = !!OS.User.PushSubscription.optedIn;
+      push.busy = false; render();
+    });
+  }
+  function pushCardHtml() {
+    if (!pushAppId() || !canSend()) return "";
+    var body, btn = "";
+    if (isIOS && !isStandalone) {
+      body = "To get a notification when someone posts, add this app to your home screen first (tap the Share button, then Add to Home Screen). Then open it from there and turn notifications on here.";
+    } else if (push.failed) {
+      body = "Notifications aren't available on this phone right now.";
+    } else if (!push.ready) {
+      return "";
+    } else if (!push.supported) {
+      body = "This browser can't show notifications. Try opening the app from your home screen.";
+    } else if (push.on) {
+      body = "Notifications are on. You'll hear about new posts in the Lift Club and replies to your posts.";
+      btn = '<button class="btn small ghost" data-push-toggle>' + (push.busy ? "…" : "Turn off") + "</button>";
+    } else if (window.Notification && Notification.permission === "denied") {
+      body = "Notifications are blocked for this app. Turn them on in your phone's settings, then come back here.";
+    } else {
+      body = "Get a notification when someone posts in the Lift Club or replies to you.";
+      btn = '<button class="btn small primary" data-push-toggle>' + (push.busy ? "…" : "Turn on notifications") + "</button>";
+    }
+    return '<section class="card push-card"><div><strong>🔔 Notifications</strong><p class="muted small">' + esc(body) + "</p></div>" + btn + "</section>";
+  }
+  document.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("[data-push-toggle]")) togglePush();
+  });
 
   // A small card on the Program tab until they've filled in their profile.
   function renderProfileNudge() {
@@ -1399,7 +1475,7 @@
     if (state.view === "progress") renderProgress(blocks);
     if (state.view === "todo") renderTodo();
     if (state.view === "site") renderSite();
-    if (state.view === "profile") renderProfile();
+    if (state.view === "profile") { renderProfile(); $("profilePane").insertAdjacentHTML("beforeend", pushCardHtml()); }
     if (state.view === "clients") renderClients();
     if (state.view === "community") renderCommunity();
     renderProfileNudge();
@@ -1997,10 +2073,10 @@
   // Personal link support: index.html?code=SC-XXXXXX signs the client straight in.
   var params = new URLSearchParams(location.search);
   var linkCode = normaliseCode(params.get("code"));
-  if (linkCode) {
-    history.replaceState(null, "", location.pathname);
-    save(KEY_CODE, linkCode);
-  }
+  if (linkCode) save(KEY_CODE, linkCode);
+  // Tapping a Lift Club notification opens the app on that tab.
+  if (params.get("view") === "community") state.view = "community";
+  if (linkCode || params.get("view")) history.replaceState(null, "", location.pathname);
 
   state.code = load(KEY_CODE, null);
   if (state.code) {
@@ -2011,6 +2087,7 @@
     } else {
       refresh(false);
     }
+    if (state.view === "community") fetchCommunity();
   } else {
     show("loginView");
   }
