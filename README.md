@@ -68,6 +68,10 @@ Changes are live as soon as you type them. Clients see them the next time they o
 
 These tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
 
+## Demo videos
+
+Every exercise except the main lifts (back squat, deadlift, bench press) gets a **▶ Demo videos on YouTube** link in the app, and so does every home swap. It opens a YouTube search for that exercise. To show one particular video instead, paste its link in the **Video** column (on the Programs tab, or the Home swaps tab for a home swap) and the button changes to **▶ Watch demo**.
+
 ## Home swaps (training at home)
 
 If a client can't get to the gym, they can tap **⇄ Swap for home** on an exercise (or **Swap all for home** at the top of a session) to see a version they can do with minimal equipment: bodyweight, bands or light dumbbells. Sets, reps and rest stay the same; the load is hidden and your "How to do it" note shows instead. Back squat, deadlift and bench press (and their barbell variations) are gym only and can't be swapped. Other squats like front or goblet squats can be swapped.
