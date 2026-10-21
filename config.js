@@ -7,6 +7,8 @@ window.SCOUTCO_CONFIG = {
   // What clients call you. Used on buttons and notes in the app.
   coachName: "Kirst",
   websiteUrl: "https://www.scoutco.com.au/",
+  // Back squat, deadlift and bench press show "Not confident on your form? Book a session with Kirst". This is where that button goes.
+  techniqueBookingUrl: "https://www.scoutco.com.au/booking-page",
   // The ScoutCo HQ tab in the app. Change a label or link here, or add another line.
   websiteLinks: [
     { label: "Buy Merch", url: "https://www.scoutco.com.au/shop" },
