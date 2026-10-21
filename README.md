@@ -188,5 +188,5 @@ Set up: **ScoutCo → Set up client profiles** adds the Profiles and PBs tabs an
 
 Your own coach app (the Clients row with Type "Coach") has two extra tabs:
 
-- **Profile**: your photo, About me, qualifications and experience, hobbies and interests, and favourite food. Clients see this as a "Your coach" card at the top of their **ScoutCo HQ** tab, and your photo shows on your "From Kirst" notes. It's saved on the **Coach profile** tab of the sheet, where you can also type it directly.
+- **Profile**: your photo, About me, qualifications and experience, hobbies and interests, and favourite food. Clients see this as a "Your coach" card at the top of their **ScoutCo HQ** tab. Your photo also sits at the top right of their app and on your "From Kirst" notes and check-in replies; tapping it opens your profile. It's saved on the **Coach profile** tab of the sheet, where you can also type it directly.
 - **Clients**: every active client's profile: photo, type, age and birthday (with a 🎂 when it's within a week), their 1RMs, goals, hobbies, favourite food and latest PBs. Tap a client to open their card.
