@@ -530,7 +530,9 @@
     var el = $("replyNote");
     var r = isOnline() ? latestReply() : null;
     if (!r) { el.classList.add("hidden"); return; }
-    el.innerHTML = "<strong>Reply from " + esc(COACH) + "</strong>" + esc(r.reply) +
+    var rPhoto = safePhoto(coachInfo().photo);
+    el.innerHTML = (rPhoto ? '<button class="note-photo" data-coach-open aria-label="About ' + esc(COACH) + '"><img src="' + esc(rPhoto) + '" alt=""></button>' : "") +
+      "<strong>Reply from " + esc(COACH) + "</strong>" + esc(r.reply) +
       '<div class="small muted reply-week">On your check-in for the ' + esc(weekLabel(r.week)) + "</div>";
     el.classList.remove("hidden");
   }
@@ -1040,6 +1042,30 @@
     "</section>";
   }
 
+  // Tapping Kirst's photo anywhere in a client's app opens her profile.
+  function showCoach() {
+    var card = coachCardHtml();
+    if (!card) return;
+    var old = document.querySelector(".coach-pop");
+    if (old) old.remove();
+    var el = document.createElement("div");
+    el.className = "pb-pop coach-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "About " + COACH);
+    el.innerHTML = '<div class="coach-pop-card">' + card +
+      '<button class="btn primary" data-coach-close>Close</button></div>';
+    document.body.appendChild(el);
+    var close = function () { el.remove(); document.removeEventListener("keydown", onKey); };
+    var onKey = function (e) { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    el.addEventListener("click", function (e) { if (e.target === el || e.target.closest("[data-coach-close]")) close(); });
+    setTimeout(function () { var b = el.querySelector("[data-coach-close]"); if (b) b.focus(); }, 50);
+  }
+  document.addEventListener("click", function (e) {
+    if (e.target.closest && e.target.closest("[data-coach-open]")) showCoach();
+  });
+
   function renderCoachProfile() {
     var saved = getProfile();
     if (!state.prof) state.prof = Object.assign({}, saved);
@@ -1180,6 +1206,12 @@
     var myPhoto = safePhoto(getProfile().photo);
     $("helloPhoto").innerHTML = myPhoto ? '<img src="' + esc(myPhoto) + '" alt="">' : "";
     $("helloPhoto").classList.toggle("hidden", !myPhoto);
+    // Clients: Kirst's photo at the top. Tap it to see her profile.
+    var showChip = !isCoach() && !!coachCardHtml();
+    var chipPhoto = showChip ? safePhoto(coachInfo().photo) : "";
+    $("coachChip").innerHTML = showChip ? (chipPhoto ? '<img src="' + esc(chipPhoto) + '" alt="">' : "<span>" + esc(initials(COACH)) + "</span>") +
+      "<small>" + esc(COACH) + "</small>" : "";
+    $("coachChip").classList.toggle("hidden", !showChip);
     $("updatedAt").textContent = data.updated
       ? "Updated " + new Date(data.updated).toLocaleString("en-AU", { weekday: "short", hour: "numeric", minute: "2-digit" })
       : "";
@@ -1212,7 +1244,7 @@
     var note = $("coachNote");
     if (client.message) {
       var cPhoto = isCoach() ? "" : safePhoto(coachInfo().photo);
-      note.innerHTML = (cPhoto ? '<img class="note-photo" src="' + esc(cPhoto) + '" alt="">' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
+      note.innerHTML = (cPhoto ? '<button class="note-photo" data-coach-open aria-label="About ' + esc(COACH) + '"><img src="' + esc(cPhoto) + '" alt=""></button>' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");

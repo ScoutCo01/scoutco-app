@@ -393,7 +393,9 @@ input[type="date"].ci-input { min-height: 44px; color-scheme: dark; }
 .coach-card h2 { margin: 0; }
 .coach-card h4, .client-card h4 { margin: 14px 0 2px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-strong); }
 .coach-card-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.note-photo { float: right; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; margin: 0 0 6px 10px; border: 2px solid var(--accent); }
+.note-photo { float: right; width: 44px; height: 44px; padding: 0; border-radius: 50%; overflow: hidden; margin: 0 0 6px 10px; border: 2px solid var(--accent); background: none; }
+.note-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.reply-note::after { content: ""; display: block; clear: both; }
 .coach-note::after { content: ""; display: block; clear: both; }
 
 /* Kirst's Clients tab */
@@ -413,3 +415,21 @@ input[type="date"].ci-input { min-height: 44px; color-scheme: dark; }
 .bday { font-size: 13px; color: #fbbf24; white-space: nowrap; }
 .client-body { padding: 4px 14px 14px; }
 .client-body .stat-row b { font-size: 16px; }
+
+/* Kirst's photo at the top of a client's app, and her profile pop-up */
+.coach-chip {
+  margin-left: auto; flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: 0; padding: 0; color: var(--muted);
+}
+.coach-chip img, .coach-chip span {
+  width: 48px; height: 48px; border-radius: 50%; object-fit: cover; border: 2px solid var(--accent); display: flex;
+  align-items: center; justify-content: center; font-weight: 800; color: var(--accent-strong); background: var(--surface-2);
+}
+.coach-chip small { font-size: 11px; font-weight: 600; }
+.coach-chip:active img, .coach-chip:active span { transform: scale(.95); }
+.coach-pop-card {
+  width: min(420px, 100%); max-height: calc(100vh - 48px); overflow-y: auto; animation: pb-pop .3s ease-out;
+}
+.coach-pop-card .coach-card { margin: 0 0 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+.coach-pop-card .btn { width: 100%; }
+@media (prefers-reduced-motion: reduce) { .coach-pop-card { animation: none; } }
