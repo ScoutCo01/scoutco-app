@@ -938,6 +938,13 @@
     } else if (ex.locked && homeDay) {
       swapLine = '<div class="ex-swap"><span class="muted small">🔒 Gym only, this one can\'t be swapped</span></div>';
     }
+    // The main lifts are taught in person, not from videos.
+    var book = safeUrl(CONFIG.techniqueBookingUrl);
+    if (ex.locked && !sw && !isCoach()) {
+      swapLine += '<div class="ex-technique">Not confident on your form? ' +
+        (book ? '<a href="' + esc(book) + '" target="_blank" rel="noopener">Book a session with ' + esc(COACH) + "</a>" : "Book a session with " + esc(COACH)) +
+        " to learn the technique.</div>";
+    }
     return '<div class="ex' + (isDone ? " done" : "") + (sw ? " swapped" : "") + '">' +
       '<button class="check" data-tick="' + esc(key) + '" aria-pressed="' + isDone + '" aria-label="Mark ' + esc(name) + ' done">' +
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0b1a14" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>' +

@@ -324,3 +324,5 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 .swap-tag { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; }
 .link-btn { border: 0; background: none; color: var(--accent-strong); font: inherit; font-size: 13px; font-weight: 600; padding: 2px 0; text-decoration: underline; }
 .ex.swapped { box-shadow: inset 3px 0 0 var(--accent); }
+.ex-technique { margin-top: 8px; font-size: 13px; color: var(--muted); border-left: 2px solid var(--accent); padding: 2px 0 2px 8px; }
+.ex-technique a { font-weight: 600; }
