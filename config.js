@@ -9,6 +9,10 @@ window.SCOUTCO_CONFIG = {
   websiteUrl: "https://www.scoutco.com.au/",
   // Back squat, deadlift and bench press show "Not confident on your form? Book a session with Kirst". This is where that button goes.
   techniqueBookingUrl: "https://www.scoutco.com.au/booking-page",
+  // PB pop-up on back squat, deadlift and bench press.
+  // false: only a weight heavier than their 1RM counts as a PB.
+  // true: also counts an estimated 1RM from a set of up to 10 reps (e.g. 100 kg for 5 reps = about 117 kg).
+  pbFromEstimate: false,
   // The ScoutCo HQ tab in the app. Change a label or link here, or add another line.
   websiteLinks: [
     { label: "Buy Merch", url: "https://www.scoutco.com.au/shop" },

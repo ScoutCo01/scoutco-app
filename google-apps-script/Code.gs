@@ -15,6 +15,8 @@
  *   Check-ins: online clients' weekly pulse check. Type your reply in "Reply from Kirst" and it shows in their app
  *   To-do:    your own to-do list (Task | Done | Added | Done on | ID). Type tasks here or add them in the app
  *   Home swaps: Exercise | Home swap | How to do it | Video. What clients can do at home instead (ScoutCo → Set up home swaps)
+ *   Profiles: one row per client. Name and Type come from Clients; the client fills in photo, 1RMs, DOB, goals and so on in the app
+ *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -83,6 +85,8 @@ function doGet(e) {
     swaps: swapsFor_(ss, code),
     checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
     todos: isCoach_(client.Type) ? todosFor_(ss) : undefined,
+    profile: isCoach_(client.Type) ? undefined : safely_(function () { return profileFor_(ss, code); }, null),
+    pbs: isCoach_(client.Type) ? undefined : safely_(function () { return pbsFor_(ss, code); }, []),
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
     updated: new Date().toISOString()
   });
@@ -422,6 +426,10 @@ function doPost(e) {
           }
           saveTodo_(todo, ev);
         }
+      } else if (ev.type === "profile") {
+        if (!isCoach_(client.Type)) saveProfile_(ss, client, ev);
+      } else if (ev.type === "pb") {
+        if (!isCoach_(client.Type)) savePb_(ss, client, ev);
       } else if (ev.type === "comment") {
         var text = clip_(ev.text, 2000).trim();
         if (text && fbIds.indexOf(String(ev.id)) === -1) {
@@ -616,6 +624,7 @@ function onOpen() {
     .addItem("Set up online clients", "setupOnline")
     .addItem("Set up to-do list", "setupTodo")
     .addItem("Set up home swaps", "setupHomeSwaps")
+    .addItem("Set up client profiles", "setupProfiles")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -625,12 +634,14 @@ function onOpen() {
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
   // New exercises on Programs get a suggested home swap (only once the Home swaps tab is set up).
   try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss.getSheetByName(SWAPS_TAB)) syncHomeSwaps_(ss); } catch (err) { /* not essential */ }
+  // New clients get a row on Profiles, and names and types stay in step with the Clients tab.
+  try { var ss2 = SpreadsheetApp.getActiveSpreadsheet(); if (ss2.getSheetByName(PROFILES_TAB)) syncProfiles_(ss2); } catch (err) { /* not essential */ }
 }
 
 /** Shows the dates on Progress and Feedback as dd/mm/yyyy (new rows pick this up too). */
 function formatDates_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  [PROGRESS_TAB, FEEDBACK_TAB, WEIGHTS_TAB, CHECKINS_TAB].forEach(function (name) {
+  [PROGRESS_TAB, FEEDBACK_TAB, WEIGHTS_TAB, CHECKINS_TAB, PB_TAB].forEach(function (name) {
     var sheet = ss.getSheetByName(name);
     if (sheet) sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy");
   });
@@ -884,6 +895,22 @@ function sendSummary_() {
     }
   });
 
+  // PBs in the last 7 days, and birthdays in the next 7.
+  var celebrate = { pbs: [], birthdays: [] };
+  try {
+    var clientName = {};
+    clients.forEach(function (c) { clientName[normalise_(c.Code)] = String(c.Name || c.Code).trim(); });
+    rowsOf_(ss, PB_TAB, PB_HEADERS.length).forEach(function (r) {
+      var nm = clientName[normalise_(r[7])];
+      if (nm && r[0] instanceof Date && r[0] >= since) {
+        celebrate.pbs.push(nm + ": " + text_(r[2]) + " " + text_(r[3]) + " kg" + (text_(r[4]) ? " (up from " + text_(r[4]) + " kg)" : ""));
+      }
+    });
+    birthdaysSoon_(ss, 7).forEach(function (b) {
+      if (clientName[b.code]) celebrate.birthdays.push(clientName[b.code] + ": " + Utilities.formatDate(b.date, tz, "EEEE d MMM") + (b.age ? " (turning " + b.age + ")" : ""));
+    });
+  } catch (err) { /* summary still useful */ }
+
   // Face to face and online clients each get their own section.
   var groups = [
     { title: "Face to face clients", online: false, quiet: [], rebook: [], setup: [], table: [] },
@@ -930,7 +957,9 @@ function sendSummary_() {
   var subject = "ScoutCo weekly summary, " + fmt(now) +
     (count("quiet") ? " · " + count("quiet") + " to check in with" : "") +
     (count("rebook") ? " · " + count("rebook") + " to rebook" : "") +
-    (count("reply") ? " · " + count("reply") + " check-in" + (count("reply") === 1 ? "" : "s") + " to reply to" : "");
+    (count("reply") ? " · " + count("reply") + " check-in" + (count("reply") === 1 ? "" : "s") + " to reply to" : "") +
+    (celebrate.pbs.length ? " · " + plural_(celebrate.pbs.length, "PB") : "") +
+    (celebrate.birthdays.length ? " · " + plural_(celebrate.birthdays.length, "birthday") : "");
 
   var h = function (t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
   var list = function (title, why, items, colour) {
@@ -962,6 +991,8 @@ function sendSummary_() {
   };
   var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#111827;max-width:760px">' +
     "<p>Here's how your clients went from " + h(fmt(since)) + " to " + h(fmt(now)) + ".</p>" +
+    list("🏆 PBs this week", "New 1RMs logged in the app.", celebrate.pbs, "#047857") +
+    list("🎂 Birthdays coming up", "In the next 7 days (from the Profiles tab).", celebrate.birthdays, "#7c3aed") +
     groups.map(section).join("") +
     '<p style="margin-top:22px"><a href="' + h(ss.getUrl()) + '">Open the ScoutCo sheet</a> for every tick, comment, weight and check-in.</p>' +
     '<p style="color:#9ca3af;font-size:12px">Clients whose Type on the Clients tab says "Online" are in the online section. ' +
@@ -969,6 +1000,7 @@ function sendSummary_() {
 
   var block = function (title, items) { return items && items.length ? title + "\n- " + items.join("\n- ") + "\n\n" : ""; };
   var text = "ScoutCo weekly summary, " + fmt(since) + " to " + fmt(now) + "\n\n" +
+    block("PBS THIS WEEK", celebrate.pbs) + block("BIRTHDAYS COMING UP", celebrate.birthdays) +
     groups.map(function (g) {
       return "===== " + g.title.toUpperCase() + " (" + g.table.length + ") =====\n\n" +
         block("CHECK IN WITH (no sessions in 7 days)", g.quiet) +
@@ -1332,4 +1364,227 @@ function newCode_(existing) {
 function styleHeader_(sheet, n) {
   sheet.getRange(1, 1, 1, n).setFontWeight("bold").setBackground("#ede9fe");
   sheet.setFrozenRows(1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Client profiles: photo, 1RMs, date of birth, goals, hobbies, food.  */
+/* Name and Type come from the Clients tab. Clients fill in the rest.  */
+/* ------------------------------------------------------------------ */
+
+var PROFILES_TAB = "Profiles";
+// [field the app uses, heading on the tab]. Columns are found by heading, so you can move them around.
+var PROFILE_COLS = [
+  ["name", "Client"], ["type", "Type"], ["photo", "Photo"], ["dob", "Date of birth"], ["age", "Age"],
+  ["squat", "Back squat 1RM (kg)"], ["deadlift", "Deadlift 1RM (kg)"], ["bench", "Bench press 1RM (kg)"],
+  ["goals", "Health and fitness goals"], ["hobbies", "Hobbies and interests"], ["food", "Favourite food"],
+  ["updated", "Updated"], ["code", "Code"], ["photoData", "Photo data"]
+];
+var PB_TAB = "PBs";
+var PB_HEADERS = ["Date", "Client", "Lift", "New 1RM (kg)", "Old 1RM (kg)", "Logged on", "ID", "Code"];
+var LIFT_COLS = { squat: "squat", deadlift: "deadlift", bench: "bench" };
+
+function safely_(fn, fallback) { try { return fn(); } catch (err) { return fallback; } }
+
+/** The Profiles tab, created the first time it's needed. */
+function profilesTab_(ss) {
+  var sheet = ss.getSheetByName(PROFILES_TAB);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(PROFILES_TAB);
+  var heads = PROFILE_COLS.map(function (c) { return c[1]; });
+  sheet.appendRow(heads);
+  styleHeader_(sheet, heads.length);
+  sheet.setFrozenColumns(1);
+  var widths = { name: 160, type: 130, photo: 90, dob: 110, age: 50, goals: 320, hobbies: 280, food: 180, updated: 110, code: 100, photoData: 60 };
+  PROFILE_COLS.forEach(function (c, i) { if (widths[c[0]]) sheet.setColumnWidth(i + 1, widths[c[0]]); });
+  sheet.getRange(2, 4, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy");
+  sheet.getRange(2, 12, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy");
+  // The photo is also kept as text so the app can show it. That column is hidden.
+  sheet.getRange(1, 14, sheet.getMaxRows(), 1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+  sheet.hideColumns(14);
+  sheet.getRange(1, 3, 1, 9).setBackground("#bbf7d0"); // what the client fills in
+  return sheet;
+}
+
+/** Where each Profiles column is (1-based), found by heading. Missing headings are added on the right. */
+function profileCols_(sheet) {
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var h = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cols = {};
+  PROFILE_COLS.forEach(function (c) {
+    var at = h.indexOf(c[1].toLowerCase());
+    if (at < 0) {
+      at = h.length;
+      h.push(c[1].toLowerCase());
+      sheet.getRange(1, at + 1).setValue(c[1]).setFontWeight("bold").setBackground("#ede9fe");
+    }
+    cols[c[0]] = at + 1;
+  });
+  cols.width = h.length;
+  return cols;
+}
+
+function colLetter_(n) { var s = ""; while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
+
+/** The row number for this client on Profiles, adding a row (with their name and type) if they don't have one. */
+function profileRow_(sheet, cols, client, create) {
+  var code = normalise_(client.Code);
+  var last = sheet.getLastRow();
+  if (last >= 2) {
+    var codes = sheet.getRange(2, cols.code, last - 1, 1).getDisplayValues();
+    for (var i = 0; i < codes.length; i++) if (normalise_(codes[i][0]) === code) return i + 2;
+  }
+  if (!create) return 0;
+  var row = last + 1;
+  sheet.getRange(row, cols.code).setValue(code);
+  fillClientCells_(sheet, cols, row, client);
+  return row;
+}
+
+/** Name, Type and the Age formula: kept in step with the Clients tab. */
+function fillClientCells_(sheet, cols, row, client) {
+  sheet.getRange(row, cols.name).setValue(cell_(String(client.Name || "")));
+  sheet.getRange(row, cols.type).setValue(cell_(String(client.Type || "")));
+  var dob = colLetter_(cols.dob) + row;
+  sheet.getRange(row, cols.age).setFormula('=IF(' + dob + '="","",DATEDIF(' + dob + ',TODAY(),"Y"))');
+}
+
+/** This client's profile for the app, or null if they don't have a row yet. */
+function profileFor_(ss, code) {
+  var sheet = ss.getSheetByName(PROFILES_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var cols = profileCols_(sheet);
+  var tz = ss.getSpreadsheetTimeZone();
+  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.width).getValues();
+  for (var i = 0; i < values.length; i++) {
+    var r = values[i];
+    if (normalise_(r[cols.code - 1]) !== code) continue;
+    var get = function (f) { return text_(r[cols[f] - 1]).replace(/^'/, ""); };
+    var dob = toDate_(r[cols.dob - 1]);
+    var upd = r[cols.updated - 1];
+    var out = { dob: dob ? Utilities.formatDate(dob, tz, "yyyy-MM-dd") : "", at: upd instanceof Date ? upd.getTime() : 0 };
+    ["goals", "hobbies", "food"].forEach(function (f) { out[f] = get(f); });
+    ["squat", "deadlift", "bench"].forEach(function (f) { var n = kg_(r[cols[f] - 1]); out[f] = n ? String(n) : ""; });
+    var photo = get("photoData");
+    out.photo = /^data:image\//.test(photo) ? photo : "";
+    // A row with only name and type (from Set up client profiles) counts as not filled in yet.
+    var filled = ["dob", "goals", "hobbies", "food", "squat", "deadlift", "bench", "photo"].some(function (f) { return out[f]; });
+    return filled || out.at ? out : null;
+  }
+  return null;
+}
+
+/** This client's last 20 PBs, newest first. */
+function pbsFor_(ss, code) {
+  var out = [];
+  rowsOf_(ss, PB_TAB, PB_HEADERS.length).forEach(function (r) {
+    if (normalise_(r[7]) !== code) return;
+    out.push({ at: r[0] instanceof Date ? r[0].getTime() : 0, lift: text_(r[2]), kg: kg_(r[3]), prev: kg_(r[4]) });
+  });
+  out.sort(function (a, b) { return b.at - a.at; });
+  return out.slice(0, 20);
+}
+
+/** A weight in kg from a cell like 100, "100", "100 kg". 0 if there isn't one. */
+function kg_(v) {
+  if (typeof v === "number") return v > 0 && v < 1000 ? Math.round(v * 2) / 2 : 0;
+  var m = String(v == null ? "" : v).replace(",", ".").match(/\d+(?:\.\d+)?/);
+  var n = m ? parseFloat(m[0]) : 0;
+  return n > 0 && n < 1000 ? Math.round(n * 2) / 2 : 0;
+}
+
+/** Saves the profile the client filled in on the app. */
+function saveProfile_(ss, client, ev) {
+  var sheet = profilesTab_(ss), cols = profileCols_(sheet);
+  var row = profileRow_(sheet, cols, client, true);
+  fillClientCells_(sheet, cols, row, client);
+  var dob = String(ev.dob || "");
+  sheet.getRange(row, cols.dob).setValue(/^\d{4}-\d{2}-\d{2}$/.test(dob) ? Utilities.parseDate(dob, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd") : "");
+  ["squat", "deadlift", "bench"].forEach(function (f) { var n = kg_(ev[f]); sheet.getRange(row, cols[f]).setValue(n || ""); });
+  ["goals", "hobbies", "food"].forEach(function (f) { sheet.getRange(row, cols[f]).setValue(cell_(clip_(ev[f], 1000).trim())); });
+  sheet.getRange(row, cols.updated).setValue(new Date());
+  setPhoto_(sheet, cols, row, client, String(ev.photo || ""));
+}
+
+/** Puts the photo in the sheet (so you can see it) and in the hidden Photo data column (for the app). */
+function setPhoto_(sheet, cols, row, client, photo) {
+  var ok = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(photo) && photo.length <= 48000;
+  var current = text_(sheet.getRange(row, cols.photoData).getValue());
+  if (ok && current === photo) return; // same photo as before
+  if (!ok) {
+    sheet.getRange(row, cols.photoData).setValue("");
+    sheet.getRange(row, cols.photo).setValue("");
+    return;
+  }
+  sheet.getRange(row, cols.photoData).setValue(photo);
+  try {
+    var img = SpreadsheetApp.newCellImage().setSourceUrl(photo).setAltTextTitle(String(client.Name || "Photo")).build();
+    sheet.getRange(row, cols.photo).setValue(img);
+    sheet.setRowHeight(row, 80);
+  } catch (err) {
+    sheet.getRange(row, cols.photo).setValue("✓ in app");
+  }
+}
+
+/** A client beat their 1RM: log it on the PBs tab and update Profiles (only ever upwards). */
+function savePb_(ss, client, ev) {
+  var field = LIFT_COLS[String(ev.liftId || "")];
+  var kg = kg_(ev.kg);
+  if (!field || !kg) return;
+  var pbs = tab_(ss, PB_TAB, PB_HEADERS);
+  var ids = pbs.getRange(1, 7, Math.max(pbs.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+  if (ids.indexOf(String(ev.id)) !== -1) return; // already saved
+  var where = [ev.exercise, ev.weight ? "logged " + clip_(ev.weight, 40) : "", ev.block, ev.week, ev.session].map(function (x) { return clip_(x, 100).trim(); }).filter(String).join(" · ");
+  pbs.appendRow([new Date(), cell_(String(client.Name || client.Code)), cell_(clip_(ev.lift, 40)), kg, kg_(ev.prev) || "", cell_(where), String(ev.id), normalise_(client.Code)]);
+
+  var sheet = profilesTab_(ss), cols = profileCols_(sheet);
+  var row = profileRow_(sheet, cols, client, true);
+  var cell = sheet.getRange(row, cols[field]);
+  if (kg > kg_(cell.getValue())) cell.setValue(kg);
+  sheet.getRange(row, cols.updated).setValue(new Date());
+}
+
+/** Gives every active client (not your Coach row) a Profiles row, and refreshes names and types. */
+function syncProfiles_(ss) {
+  var sheet = profilesTab_(ss), cols = profileCols_(sheet), added = 0;
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    if (!String(c.Code || "").trim() || isOff_(c.Active) || isCoach_(c.Type)) return;
+    var row = profileRow_(sheet, cols, c, false);
+    if (!row) { profileRow_(sheet, cols, c, true); added++; }
+    else {
+      var cur = sheet.getRange(row, 1, 1, cols.width).getDisplayValues()[0];
+      if (cur[cols.name - 1] !== String(c.Name || "") || cur[cols.type - 1] !== String(c.Type || "")) fillClientCells_(sheet, cols, row, c);
+    }
+  });
+  return added;
+}
+
+/** Clients with a birthday in the next `days` days: [{ code, date, age }]. */
+function birthdaysSoon_(ss, days) {
+  var sheet = ss.getSheetByName(PROFILES_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var cols = profileCols_(sheet), out = [];
+  var now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.width).getValues().forEach(function (r) {
+    var dob = toDate_(r[cols.dob - 1]);
+    if (!dob) return;
+    for (var y = today.getFullYear(); y <= today.getFullYear() + 1; y++) {
+      var next = new Date(y, dob.getMonth(), dob.getDate());
+      var diff = Math.round((next - today) / 864e5);
+      if (diff >= 0 && diff < days) { out.push({ code: normalise_(r[cols.code - 1]), date: next, age: y - dob.getFullYear() }); break; }
+      if (diff >= 0) break;
+    }
+  });
+  return out.sort(function (a, b) { return a.date - b.date; });
+}
+
+/** ScoutCo menu → Set up client profiles. */
+function setupProfiles() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var added = syncProfiles_(ss);
+  tab_(ss, PB_TAB, PB_HEADERS).setColumnWidth(6, 360);
+  ss.setActiveSheet(ss.getSheetByName(PROFILES_TAB));
+  SpreadsheetApp.getUi().alert("Done! " + (added ? added + " clients added to the Profiles tab. " : "Every client is already on the Profiles tab. ") +
+    "Names and types come from the Clients tab. The green columns fill in when clients complete their profile in the app.\n\n" +
+    "When a client logs a weight heavier than their 1RM on back squat, deadlift or bench press, they get a PB pop-up, " +
+    "their 1RM updates here and the PB is listed on the PBs tab. PBs and birthdays also show in your Monday email.");
 }

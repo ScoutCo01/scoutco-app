@@ -163,3 +163,23 @@ That link signs them straight in. Then they add the app to their home screen:
 
 - **Logo:** the files in `icons/` were made from the ScoutCo logo. Send Claude a new one to update them.
 - **Colours:** see the top of `styles.css`.
+
+## Client profiles and PBs
+
+Every client (not your Coach row) has a **Profile** tab in the app. Their name and type come from the Clients tab. They add:
+
+- a profile photo (shrunk to a small square so it fits in the sheet)
+- their 1RM for back squat, deadlift and bench press
+- date of birth, health and fitness goals, hobbies and interests, and favourite food
+
+Until they've filled it in, the Program tab shows a "Tell Kirst about you" card and the Profile tab has a dot.
+
+Everything lands on the **Profiles** tab of your sheet, one row per client, with their photo in the Photo column and their age worked out from their date of birth. You can type over anything there (for example, a 1RM you tested together) and the app picks it up next time it opens.
+
+**PB pop-up:** when a client types a weight in "Weight used" on back squat, deadlift or bench press that's heavier than their 1RM, the app celebrates with a pop-up, updates their 1RM, and adds a row to the **PBs** tab. Variations like front squats, RDLs or incline bench don't count. A jump of more than 30% asks "Is that right?" first, to catch typos. If a client hasn't entered a 1RM for a lift yet, there's nothing to beat, so no pop-up.
+
+By default only a weight heavier than their 1RM counts. To also count an estimated 1RM from a set of up to 10 reps (100 kg for 5 reps is about 117 kg), set `pbFromEstimate: true` in `config.js`.
+
+Your **Monday email** now starts with PBs from the last week and birthdays in the next 7 days.
+
+Set up: **ScoutCo → Set up client profiles** adds the Profiles and PBs tabs and a row for every client.

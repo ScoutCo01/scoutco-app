@@ -13,6 +13,7 @@
   var KEY_SWAPS = "scoutco.swaps";
   var KEY_CHECKINS = "scoutco.checkins";
   var KEY_TODOS = "scoutco.todos";
+  var KEY_PROFILE = "scoutco.profile";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var COACH = String(CONFIG.coachName || "Kirst");
@@ -20,7 +21,7 @@
   var $ = function (id) { return document.getElementById(id); };
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
-      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false };
+      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "" };
   }
   var state = freshState();
 
@@ -124,6 +125,7 @@
     mergeSwaps(data && data.ticks, data && data.swaps);
     mergeCheckins(data && data.checkins);
     mergeTodos(data && data.todos);
+    mergeProfile(data);
     if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
     var blocks = getBlocks(data);
@@ -144,7 +146,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE);
     state = freshState();
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
@@ -161,7 +163,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -483,6 +485,7 @@
       v = [["program", "Program"]];
       if (isOnline()) v.push(["checkin", "Check-in"]);
       v.push(["progress", "Progress"]);
+      v.push(["profile", "Profile"]);
     }
     if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
     return v;
@@ -491,11 +494,12 @@
     var views = viewList();
     if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
     var due = isOnline() && !checkinFor(thisWeekOf());
+    var profDue = !isCoach() && profileNeedsFilling();
     var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + (v[0] === "checkin" && due ? '<span class="dot" aria-label="due"></span>' : "") +
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) ? '<span class="dot" aria-label="to do"></span>' : "") +
         (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") + "</button>";
     }).join("");
     $("programPane").classList.toggle("hidden", state.view !== "program");
@@ -503,6 +507,7 @@
     $("progressPane").classList.toggle("hidden", state.view !== "progress");
     $("todoPane").classList.toggle("hidden", state.view !== "todo");
     $("sitePane").classList.toggle("hidden", state.view !== "site");
+    $("profilePane").classList.toggle("hidden", state.view !== "profile");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -762,6 +767,252 @@
     "</svg>";
   }
 
+  // ---------- client profile ----------
+  // Name and Type come from the Clients tab (Kirst sets those). The client fills in the rest.
+  // Saved on the phone as { code, p: { photo, dob, squat, deadlift, bench, hobbies, goals, food, at }, pbs: [...] }.
+  var LIFTS = [
+    { id: "squat", name: "Back squat" },
+    { id: "deadlift", name: "Deadlift" },
+    { id: "bench", name: "Bench press" }
+  ];
+  var PROFILE_FIELDS = ["photo", "dob", "squat", "deadlift", "bench", "hobbies", "goals", "food"];
+
+  function profileStore() { var s = load(KEY_PROFILE, null); return s && s.code === state.code ? s : { code: state.code, p: {}, pbs: [] }; }
+  function getProfile() { return profileStore().p || {}; }
+  function getPbs() { return profileStore().pbs || []; }
+  function saveProfileStore(p, pbs) { save(KEY_PROFILE, { code: state.code, p: p, pbs: pbs || getPbs() }); }
+  function profileWaiting() { return load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile" || x.type === "pb"; }); }
+  function safePhoto(u) { u = String(u || ""); return /^data:image\/(jpeg|png|webp);base64,[a-z0-9+\/=]+$/i.test(u) ? u : ""; }
+  function hasProfileData(p) { return PROFILE_FIELDS.some(function (f) { return String(p[f] || "").trim() !== ""; }); }
+  // The Profile tab gets a dot until they've told Kirst the basics.
+  function profileNeedsFilling() {
+    var p = getProfile();
+    return !p.dob || !String(p.goals || "").trim() || !LIFTS.some(function (l) { return kgOf(p[l.id]); });
+  }
+
+  // The sheet's copy wins, unless the phone has changes it hasn't sent yet.
+  function mergeProfile(data) {
+    if (!data || !state.code || isCoach() || !("profile" in data)) return; // older script: keep what's on the phone
+    var mine = profileStore();
+    var pbs = Array.isArray(data.pbs) ? data.pbs : mine.pbs;
+    if (profileWaiting()) { saveProfileStore(mine.p, mine.pbs.length >= pbs.length ? mine.pbs : pbs); return; }
+    if (!data.profile) {
+      // Nothing in the sheet yet but the phone has something (e.g. filled in before the script was updated): send it up.
+      saveProfileStore(mine.p, pbs);
+      if (hasProfileData(mine.p)) queueProfile(mine.p);
+      return;
+    }
+    var p = {};
+    PROFILE_FIELDS.forEach(function (f) { p[f] = String(data.profile[f] == null ? "" : data.profile[f]); });
+    p.at = +data.profile.at || 0;
+    var draft = state.prof, dirty = draft && PROFILE_FIELDS.some(function (f) { return String(draft[f] || "") !== String(mine.p[f] || ""); });
+    saveProfileStore(p, pbs);
+    if (!dirty) state.prof = null; // don't throw away something they're halfway through typing
+  }
+
+  function queueProfile(p) {
+    var ev = { type: "profile", key: "profile" };
+    PROFILE_FIELDS.forEach(function (f) { ev[f] = p[f] || ""; });
+    queue(ev);
+  }
+
+  // "100 kg", "100", "80/90/100" or "100kg x 3" -> 100. Pounds are changed to kg.
+  function kgOf(s) {
+    var t = String(s == null ? "" : s).replace(/,/g, ".");
+    var nums = (t.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).filter(function (n) { return n > 0 && n < 1000; });
+    if (!nums.length) return 0;
+    var n = Math.max.apply(null, nums);
+    if (/\blbs?\b|\d\s*lbs?/i.test(t)) n = n * 0.4536;
+    return Math.round(n * 2) / 2; // nearest half kilo
+  }
+  function kgText(n) { return n ? String(n).replace(/\.0$/, "") + " kg" : ""; }
+
+  // Which of the three big lifts an exercise is (only the lift itself, not variations like RDLs or front squats).
+  function liftOf(name) {
+    var n = String(name || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (/\b(box|pin|half|quarter|partial|band|banded|chains?|smith|safety|ssb|front|goblet|split|bulgarian|hack|zercher|overhead|landmine|db|dumbbell|kettlebell|kb|machine)\b/.test(n)) return null;
+    if (/back squat|^(barbell |high[- ]bar |low[- ]bar |comp |competition |paused? )*squat$/.test(n)) return LIFTS[0];
+    if (/deadlift/.test(n) && !/\b(romanian|rdl|stiff|single|trap|hex|snatch|suitcase|b-stance|kickstand|rack|block|jefferson)\b/.test(n)) return LIFTS[1];
+    if (/bench/.test(n) && !/\b(incline|decline|close|floor|board|spoto|larsen|single|one-arm|1-arm|reverse|dips?|step|row|jump|hop|sit-?ups?|crunch)\b/.test(n)) return LIFTS[2];
+    return null;
+  }
+
+  // Called when a client logs a weight. If it beats their 1RM on a big lift, update it and celebrate.
+  function checkPb(info, weightText) {
+    var lift = liftOf(info.name);
+    if (!lift || !weightText) return;
+    var kg = kgOf(weightText);
+    var reps = parseInt(String(info.reps || "").trim(), 10);
+    // Optional (config.js pbFromEstimate): count an estimated 1RM from a set of up to 10 reps.
+    if (CONFIG.pbFromEstimate && /^\d+$/.test(String(info.reps || "").trim()) && reps > 1 && reps <= 10) {
+      kg = Math.round(kg * (1 + reps / 30) * 2) / 2;
+    }
+    var p = getProfile(), cur = kgOf(p[lift.id]);
+    if (!kg || !cur || kg <= cur) return; // no 1RM entered yet, or not heavier
+    if (kg > cur * 1.3 && !window.confirm(kgText(kg) + " is a big jump from your " + lift.name.toLowerCase() + " 1RM of " + kgText(cur) + ". Is that right?")) return;
+    p = Object.assign({}, p);
+    p[lift.id] = String(kg);
+    p.at = Date.now();
+    var pb = { at: Date.now(), lift: lift.name, kg: kg, prev: cur };
+    saveProfileStore(p, [pb].concat(getPbs()).slice(0, 20));
+    if (state.prof) state.prof[lift.id] = String(kg);
+    queue({ type: "pb", key: newId(), liftId: lift.id, lift: lift.name, kg: kg, prev: cur,
+      exercise: info.name, weight: weightText, block: info.block, week: info.week, session: info.session });
+    showPb(lift, kg, cur);
+  }
+
+  function showPb(lift, kg, prev) {
+    var old = document.querySelector(".pb-pop");
+    if (old) old.remove();
+    var colours = ["#8b5cf6", "#a78bfa", "#34d399", "#fbbf24", "#f472b6", "#ffffff"];
+    var bits = "";
+    for (var i = 0; i < 40; i++) {
+      bits += '<i style="left:' + (Math.random() * 100).toFixed(1) + "%;background:" + colours[i % colours.length] +
+        ";animation-delay:" + (Math.random() * 0.6).toFixed(2) + "s;animation-duration:" + (1.8 + Math.random() * 1.4).toFixed(2) + "s;transform:rotate(" + Math.round(Math.random() * 360) + 'deg)"></i>';
+    }
+    var el = document.createElement("div");
+    el.className = "pb-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "New PB");
+    el.innerHTML = '<div class="confetti" aria-hidden="true">' + bits + "</div>" +
+      '<div class="pb-card">' +
+        '<div class="pb-emoji" aria-hidden="true">🏆</div>' +
+        '<div class="pb-kicker">New PB!</div>' +
+        '<div class="pb-lift">' + esc(lift.name) + "</div>" +
+        '<div class="pb-kg">' + esc(kgText(kg)) + "</div>" +
+        '<p class="pb-text">That\'s ' + esc(kgText(Math.round((kg - prev) * 2) / 2)) + " more than your old best of " + esc(kgText(prev)) +
+          ". Your 1RM on your profile is updated, and " + esc(COACH) + " will see it too.</p>" +
+        '<button class="btn primary" data-pb-close>Let\'s go! 💪</button>' +
+      "</div>";
+    document.body.appendChild(el);
+    try { if (navigator.vibrate) navigator.vibrate([80, 50, 120]); } catch (e) { /* not on every phone */ }
+    var close = function () { el.remove(); };
+    el.addEventListener("click", function (e) { if (e.target === el || e.target.closest("[data-pb-close]")) close(); });
+    setTimeout(function () { var b = el.querySelector("[data-pb-close]"); if (b) b.focus(); }, 50);
+  }
+
+  // Shrinks a photo to a small square so it fits in one cell of the sheet.
+  function shrinkPhoto(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var side = Math.min(img.naturalWidth, img.naturalHeight);
+        if (!side) { reject(new Error("bad image")); return; }
+        var sx = (img.naturalWidth - side) / 2, sy = (img.naturalHeight - side) / 2;
+        var tries = [[320, 0.82], [320, 0.7], [280, 0.62], [240, 0.55], [200, 0.5]];
+        for (var i = 0; i < tries.length; i++) {
+          var c = document.createElement("canvas");
+          c.width = c.height = tries[i][0];
+          var ctx = c.getContext("2d");
+          ctx.fillStyle = "#1d1a24";
+          ctx.fillRect(0, 0, c.width, c.height);
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, c.width, c.height);
+          var out = c.toDataURL("image/jpeg", tries[i][1]);
+          if (out.length <= 45000 || i === tries.length - 1) { resolve(out.length <= 45000 ? out : ""); return; }
+        }
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("bad image")); };
+      img.src = url;
+    });
+  }
+
+  function setPhoto(photo) {
+    var p = Object.assign({}, getProfile(), { photo: photo, at: Date.now() });
+    saveProfileStore(p);
+    if (state.prof) state.prof.photo = photo;
+    queueProfile(p);
+    render();
+  }
+
+  function initials(name) {
+    return String(name || "").trim().split(/\s+/).slice(0, 2).map(function (w) { return w.charAt(0).toUpperCase(); }).join("") || "?";
+  }
+
+  function renderProfile() {
+    var client = (state.data && state.data.client) || {};
+    var saved = getProfile();
+    if (!state.prof) state.prof = Object.assign({}, saved);
+    var d = state.prof;
+    var photo = safePhoto(d.photo);
+    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "profile"; });
+    var dirty = PROFILE_FIELDS.some(function (f) { return f !== "photo" && String(d[f] || "") !== String(saved[f] || ""); });
+    var status = state.profMsg || (dirty ? "" : pending && canSend() ? "Saving…" : saved.at ? "Saved ✓" : "");
+    var field = function (id, label, html) {
+      return '<label class="ci-label" for="pf-' + id + '">' + label + "</label>" + html;
+    };
+    var input = function (id, attrs, placeholder) {
+      return '<input id="pf-' + id + '" class="ci-input" data-prof="' + id + '" ' + attrs + ' placeholder="' + esc(placeholder) + '" value="' + esc(d[id] || "") + '">';
+    };
+    var area = function (id, placeholder) {
+      return '<textarea id="pf-' + id + '" class="ci-input" data-prof="' + id + '" rows="3" maxlength="1000" placeholder="' + esc(placeholder) + '">' + esc(d[id] || "") + "</textarea>";
+    };
+    var lifts = LIFTS.map(function (l) {
+      return '<div class="rm"><label for="pf-' + l.id + '">' + esc(l.name) + "</label>" +
+        '<div class="rm-box"><input id="pf-' + l.id + '" data-prof="' + l.id + '" type="text" inputmode="decimal" maxlength="10" autocomplete="off" placeholder="–" value="' +
+          esc(String(d[l.id] || "").replace(/\s*kg$/i, "")) + '"><span>kg</span></div></div>';
+    }).join("");
+    var pbs = getPbs().slice(0, 8);
+
+    $("profilePane").innerHTML =
+      '<section class="card profile-head">' +
+        '<label class="avatar' + (photo ? "" : " empty") + '" for="pf-photo" aria-label="' + (photo ? "Change" : "Add") + ' your photo">' +
+          (photo ? '<img src="' + esc(photo) + '" alt="">' : "<span>" + esc(initials(client.name)) + "</span>") +
+          '<em aria-hidden="true">📷</em>' +
+        "</label>" +
+        '<input id="pf-photo" class="sr-only" type="file" accept="image/*" data-prof-photo>' +
+        '<div class="profile-who"><h2>' + esc(client.name || "Your profile") + "</h2>" +
+          (client.type ? '<span class="type-badge">' + esc(client.type) + "</span>" : "") +
+          '<div class="small muted">' + (photo ? '<button class="link-btn" data-prof-photo-del>Remove photo</button>' : "Tap the circle to add a photo") + "</div>" +
+        "</div>" +
+      "</section>" +
+      '<section class="card">' +
+        "<h3>Your 1RMs</h3>" +
+        '<p class="muted small">The most you can lift for one rep. When you log a heavier weight on one of these lifts, it updates by itself and you get a PB pop-up 🎉</p>' +
+        '<div class="rms">' + lifts + "</div>" +
+      "</section>" +
+      '<section class="card">' +
+        "<h3>About you</h3>" +
+        '<p class="muted small">Helps ' + esc(COACH) + " get to know you and plan your training.</p>" +
+        field("dob", "Date of birth", input("dob", 'type="date" max="' + isoDay(new Date()) + '"', "")) +
+        field("goals", "Health and fitness goals", area("goals", "e.g. Deadlift 100 kg, run 5 km without stopping, feel strong for netball")) +
+        field("hobbies", "Hobbies and interests", area("hobbies", "What do you love doing outside the gym?")) +
+        field("food", "Favourite food", input("food", 'type="text" maxlength="200" autocomplete="off"', "Go on, tell us")) +
+        '<div class="ci-actions"><span class="small muted">' + esc(status) + "</span>" +
+          '<button class="btn primary" data-prof-save>Save profile</button></div>' +
+      "</section>" +
+      (pbs.length ? '<h3 class="section-title">Your PBs</h3><section class="card"><ul class="pb-list">' + pbs.map(function (b) {
+        return "<li><span>🏆 <b>" + esc(b.lift) + " " + esc(kgText(+b.kg)) + "</b>" + (+b.prev ? ' <small class="muted">up from ' + esc(kgText(+b.prev)) + "</small>" : "") + "</span>" +
+          '<small class="muted">' + (b.at ? esc(new Date(+b.at).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })) : "") + "</small></li>";
+      }).join("") + "</ul></section>" : "");
+  }
+
+  function saveProfile() {
+    var d = state.prof || {};
+    var p = Object.assign({}, getProfile());
+    ["dob", "hobbies", "goals", "food"].forEach(function (f) { p[f] = String(d[f] || "").trim().slice(0, 1000); });
+    LIFTS.forEach(function (l) { var kg = kgOf(d[l.id]); p[l.id] = kg ? String(kg) : ""; });
+    if (p.dob && !/^\d{4}-\d{2}-\d{2}$/.test(p.dob)) p.dob = "";
+    p.at = Date.now();
+    saveProfileStore(p);
+    queueProfile(p);
+    state.prof = null;
+    state.profMsg = "";
+    render();
+  }
+
+  // A small card on the Program tab until they've filled in their profile.
+  function renderProfileNudge() {
+    var el = $("profileNudge");
+    var showIt = !isCoach() && state.data && profileNeedsFilling() && !hasProfileData(getProfile());
+    el.classList.toggle("hidden", !showIt);
+    if (!showIt) return;
+    el.innerHTML = "<div><strong>Tell " + esc(COACH) + " about you</strong>" +
+      "<div>Add a photo, your 1RMs, goals and favourite food. Takes 2 minutes.</div></div>" +
+      '<button class="btn primary" data-goto-profile>Fill in my profile</button>';
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
@@ -769,6 +1020,7 @@
     var attr = active && active.getAttribute && (active.getAttribute("data-comment") != null ? "data-comment" :
       active.getAttribute("data-weight") != null ? "data-weight" :
       active.getAttribute("data-ci") != null ? "data-ci" :
+      active.getAttribute("data-prof") != null ? "data-prof" :
       active.getAttribute("data-todo-new") != null ? "data-todo-new" : null);
     var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
@@ -786,6 +1038,9 @@
     var weeks = currentWeeks();
 
     $("helloName").textContent = client.name ? "Hi " + String(client.name).split(" ")[0] : "Your program";
+    var myPhoto = isCoach() ? "" : safePhoto(getProfile().photo);
+    $("helloPhoto").innerHTML = myPhoto ? '<img src="' + esc(myPhoto) + '" alt="">' : "";
+    $("helloPhoto").classList.toggle("hidden", !myPhoto);
     $("updatedAt").textContent = data.updated
       ? "Updated " + new Date(data.updated).toLocaleString("en-AU", { weekday: "short", hour: "numeric", minute: "2-digit" })
       : "";
@@ -811,6 +1066,8 @@
     if (state.view === "progress") renderProgress(blocks);
     if (state.view === "todo") renderTodo();
     if (state.view === "site") renderSite();
+    if (state.view === "profile") renderProfile();
+    renderProfileNudge();
 
     var note = $("coachNote");
     if (client.message) {
@@ -860,7 +1117,7 @@
         var sw = isCoach() ? null : activeSwap(ex, k, swaps);
         state.info[k] = { block: where.block, week: where.week, session: where.session,
           exercise: (ex.label ? ex.label + " " : "") + ex.name, name: sw ? sw.name : ex.name, swap: sw ? sw.name : "",
-          home: isCoach() ? null : ex.home, key: k.slice(state.code.length + 1) };
+          home: isCoach() ? null : ex.home, reps: ex.reps, key: k.slice(state.code.length + 1) };
         var isDone = !!ticks[k];
         if (isDone) done++;
         return exerciseHtml(ex, k, isDone, weights, sw, swapped > 0);
@@ -1058,6 +1315,33 @@
     if (e.target.closest("[data-todo-all]")) { state.todoAll = !state.todoAll; render(); }
   });
 
+  $("profilePane").addEventListener("input", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-prof");
+    if (f && state.prof) { state.prof[f] = e.target.value; state.profMsg = ""; }
+  });
+  $("profilePane").addEventListener("change", function (e) {
+    if (!e.target.hasAttribute || !e.target.hasAttribute("data-prof-photo")) return;
+    var file = e.target.files && e.target.files[0];
+    if (!file) return;
+    shrinkPhoto(file).then(function (photo) {
+      if (!photo) throw new Error("too big");
+      setPhoto(photo);
+    }).catch(function () {
+      state.profMsg = "Couldn't use that photo. Try a different one.";
+      render();
+    });
+  });
+  $("profilePane").addEventListener("click", function (e) {
+    if (e.target.closest("[data-prof-save]")) { saveProfile(); return; }
+    if (e.target.closest("[data-prof-photo-del]") && window.confirm("Remove your photo?")) setPhoto("");
+  });
+  $("profileNudge").addEventListener("click", function (e) {
+    if (!e.target.closest("[data-goto-profile]")) return;
+    state.view = "profile";
+    render();
+    window.scrollTo(0, 0);
+  });
+
   $("progressPane").addEventListener("change", function (e) {
     if (e.target.getAttribute && e.target.getAttribute("data-lift") != null) { state.liftPick = e.target.value; render(); }
   });
@@ -1153,6 +1437,7 @@
     var i = state.info[k] || {};
     setWeight(k, w, i.name, i.week);
     if (i.key) queue({ type: isCoach() ? "note" : "weight", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.name, weight: w });
+    if (!isCoach() && !i.swap) checkPb(i, w);
     var input = document.querySelector('[data-weight="' + CSS.escape(k) + '"]');
     if (input) keepOpen(input);
     // Wait a moment so that if they tapped straight into the next box, it keeps the cursor.
