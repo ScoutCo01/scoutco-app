@@ -94,8 +94,8 @@ function doGet(e) {
     pbs: isCoach_(client.Type) ? undefined : safely_(function () { return pbsFor_(ss, code); }, []),
     coach: isCoach_(client.Type) ? undefined : safely_(function () { return coachProfile_(ss); }, null),
     clients: isCoach_(client.Type) ? safely_(function () { return clientProfiles_(ss); }, []) : undefined,
-    settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
-    community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0) },
+    settings: { bookingUrl: setting_(ss, BOOKING_SETTING), pushAppId: setting_(ss, PUSH_APP_SETTING) },
+    community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0), me: safely_(function () { return personId_(code, communitySalt_()); }, "") },
     updated: new Date().toISOString()
   });
 }
@@ -460,6 +460,7 @@ function doPost(e) {
   if (comments.length) notify_(ss, client, comments);
   if (checkins.length) notifyCheckin_(ss, client, checkins);
   if (posted.length) notifyCommunity_(ss, client, posted);
+  if (posted.length) safely_(function () { pushCommunity_(ss, client, posted); }, null);
   return json_({ ok: true, saved: done });
 }
 
@@ -640,6 +641,8 @@ function onOpen() {
     .addItem("Set up home swaps", "setupHomeSwaps")
     .addItem("Set up client profiles", "setupProfiles")
     .addItem("Set up Lift Club Community", "setupCommunity")
+    .addItem("Set up push notifications", "setupPush")
+    .addItem("Send me a test notification", "testPush")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -1855,7 +1858,13 @@ function saveCommunity_(ss, client, events) {
       var at = sheet.getLastRow();
       sheet.getRange(at, CC.hide).insertCheckboxes();
       byId[id] = { row: at, id: id, text: text, from: name, parent: parent ? parent.id : "", data: {}, code: code };
-      posted.push({ text: text, reply: parent ? parent.from + ": " + clip_(parent.text, 80) : "" });
+      // Who gets a notification: everyone for a new post; for a reply, whoever wrote the post or replied to it.
+      var to = null;
+      if (parent) {
+        to = [parent.code];
+        Object.keys(byId).forEach(function (k) { if (byId[k].parent === parent.id) to.push(byId[k].code); });
+      }
+      posted.push({ text: text, reply: parent ? parent.from + ": " + clip_(parent.text, 80) : "", to: to });
     } else if (ev.type === "react") {
       var p = byId[clip_(ev.post, 40)], e = String(ev.emoji || "");
       if (!p || COMMUNITY_REACTIONS.indexOf(e) === -1) return;
@@ -1897,4 +1906,76 @@ function setupCommunity() {
     "Each post shows up here, and you get an email when a client posts.\n\n" +
     "To take a post down, tick its Hide box (untick to bring it back), or tap Hide on the post in your coach app. " +
     "You can also delete the row.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Push notifications for the Lift Club Community, sent by OneSignal   */
+/* (free). Your OneSignal App ID and API key go on the Settings tab.   */
+/* ------------------------------------------------------------------ */
+
+var PUSH_APP_SETTING = "OneSignal App ID";
+var PUSH_KEY_SETTING = "OneSignal API key";
+var APP_URL = "https://scoutco01.github.io/scoutco-app/";
+
+/** Sends a notification through OneSignal to these people (personId_ values). Returns OneSignal's reply. */
+function sendPush_(ss, ids, title, message) {
+  var appId = setting_(ss, PUSH_APP_SETTING), key = setting_(ss, PUSH_KEY_SETTING);
+  if (!appId || !key || !ids.length) return null;
+  var res = UrlFetchApp.fetch("https://api.onesignal.com/notifications?c=push", {
+    method: "post",
+    contentType: "application/json",
+    headers: { Authorization: (/^(Key|Basic) /.test(key) ? "" : "Key ") + key },
+    payload: JSON.stringify({
+      app_id: appId, target_channel: "push", include_aliases: { external_id: ids },
+      headings: { en: title }, contents: { en: clip_(message, 180) }, url: APP_URL + "?view=community"
+    }),
+    muteHttpExceptions: true
+  });
+  return { code: res.getResponseCode(), body: res.getContentText() };
+}
+
+/** After someone posts: a notification to everyone else (a new post), or to the people in that thread (a reply). */
+function pushCommunity_(ss, client, posted) {
+  if (!setting_(ss, PUSH_APP_SETTING) || !setting_(ss, PUSH_KEY_SETTING)) return;
+  var salt = communitySalt_(), mine = normalise_(client.Code), name = communityName_(client);
+  var everyone = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) && !isOff_(c.Active); })
+    .map(function (c) { return normalise_(c.Code); });
+  posted.forEach(function (p) {
+    var codes = (p.to || everyone).filter(function (c, i, all) { return c && c !== mine && all.indexOf(c) === i && everyone.indexOf(c) !== -1; });
+    var ids = codes.map(function (c) { return personId_(c, salt); });
+    sendPush_(ss, ids, "Lift Club Community", (p.to ? name + " replied: " : name + ": ") + p.text);
+  });
+}
+
+/** ScoutCo menu: adds the two OneSignal rows to the Settings tab. */
+function setupPush() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = setupSettingsTab_(ss);
+  var names = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
+  [PUSH_APP_SETTING, PUSH_KEY_SETTING].forEach(function (n) { if (names.indexOf(n.toLowerCase()) === -1) sheet.appendRow([n, ""]); });
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Nearly there! On the Settings tab, paste your OneSignal App ID and API key next to their names.\n\n" +
+    "Then open your app, go to Lift Club Community, tap Turn on notifications, and come back here and run ScoutCo > Send me a test notification.");
+}
+
+/** ScoutCo menu: sends a test notification to every coach's phone. */
+function testPush() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), ui = SpreadsheetApp.getUi();
+  if (!setting_(ss, PUSH_APP_SETTING) || !setting_(ss, PUSH_KEY_SETTING)) {
+    ui.alert("First paste your OneSignal App ID and API key on the Settings tab (ScoutCo > Set up push notifications adds the rows).");
+    return;
+  }
+  var salt = communitySalt_();
+  var ids = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) && isCoach_(c.Type) && !isOff_(c.Active); })
+    .map(function (c) { return personId_(c.Code, salt); });
+  if (!ids.length) { ui.alert("No row on the Clients tab has the Type Coach, so there's no one to send it to."); return; }
+  var r = sendPush_(ss, ids, "Lift Club Community", "Test notification. If you can see this, notifications are working! 🎉");
+  var ok = r && r.code === 200 && !/"errors"/.test(r.body);
+  if (r && r.code === 200 && /invalid_aliases|not subscribed/i.test(r.body)) {
+    ui.alert("OneSignal is connected, but your phone isn't signed up for notifications yet.\n\n" +
+      "Open your app, go to Lift Club Community and tap Turn on notifications (on iPhone, open the app from your home screen first). Then try this again.");
+    return;
+  }
+  ui.alert(ok ? "Sent! It should pop up on your phone in a few seconds.\n\nNothing showing? Check you tapped Turn on notifications in the Lift Club Community tab of your app, on that phone."
+    : "OneSignal didn't send it. Check the App ID and API key on the Settings tab.\n\nWhat OneSignal said: " + (r ? r.code + " " + clip_(r.body, 300) : "no reply"));
 }
