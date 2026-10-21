@@ -16,6 +16,7 @@
  *   To-do:    your own to-do list (Task | Done | Added | Done on | ID). Type tasks here or add them in the app
  *   Home swaps: Exercise | Home swap | How to do it | Video. What clients can do at home instead (ScoutCo → Set up home swaps)
  *   Profiles: one row per client. Name and Type come from Clients; the client fills in photo, 1RMs, DOB, goals and so on in the app
+ *   Coach profile: your own photo and bio (filled in from the Profile tab of your coach app). Clients see it in their app
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
@@ -85,8 +86,10 @@ function doGet(e) {
     swaps: swapsFor_(ss, code),
     checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
     todos: isCoach_(client.Type) ? todosFor_(ss) : undefined,
-    profile: isCoach_(client.Type) ? undefined : safely_(function () { return profileFor_(ss, code); }, null),
+    profile: safely_(function () { return isCoach_(client.Type) ? coachProfile_(ss) : profileFor_(ss, code); }, null),
     pbs: isCoach_(client.Type) ? undefined : safely_(function () { return pbsFor_(ss, code); }, []),
+    coach: isCoach_(client.Type) ? undefined : safely_(function () { return coachProfile_(ss); }, null),
+    clients: isCoach_(client.Type) ? safely_(function () { return clientProfiles_(ss); }, []) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
     updated: new Date().toISOString()
   });
@@ -428,6 +431,8 @@ function doPost(e) {
         }
       } else if (ev.type === "profile") {
         if (!isCoach_(client.Type)) saveProfile_(ss, client, ev);
+      } else if (ev.type === "coachprofile") {
+        if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
       } else if (ev.type === "comment") {
@@ -1449,28 +1454,31 @@ function fillClientCells_(sheet, cols, row, client) {
 }
 
 /** This client's profile for the app, or null if they don't have a row yet. */
-function profileFor_(ss, code) {
+function profileFor_(ss, code) { return profilesByCode_(ss)[code] || null; }
+
+/** Every filled-in row on the Profiles tab, as { "<code>": { dob, squat, ..., photo, at } }. */
+function profilesByCode_(ss) {
+  var out = {};
   var sheet = ss.getSheetByName(PROFILES_TAB);
-  if (!sheet || sheet.getLastRow() < 2) return null;
+  if (!sheet || sheet.getLastRow() < 2) return out;
   var cols = profileCols_(sheet);
   var tz = ss.getSpreadsheetTimeZone();
-  var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.width).getValues();
-  for (var i = 0; i < values.length; i++) {
-    var r = values[i];
-    if (normalise_(r[cols.code - 1]) !== code) continue;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, cols.width).getValues().forEach(function (r) {
+    var code = normalise_(r[cols.code - 1]);
+    if (!code) return;
     var get = function (f) { return text_(r[cols[f] - 1]).replace(/^'/, ""); };
     var dob = toDate_(r[cols.dob - 1]);
     var upd = r[cols.updated - 1];
-    var out = { dob: dob ? Utilities.formatDate(dob, tz, "yyyy-MM-dd") : "", at: upd instanceof Date ? upd.getTime() : 0 };
-    ["goals", "hobbies", "food"].forEach(function (f) { out[f] = get(f); });
-    ["squat", "deadlift", "bench"].forEach(function (f) { var n = kg_(r[cols[f] - 1]); out[f] = n ? String(n) : ""; });
+    var p = { dob: dob ? Utilities.formatDate(dob, tz, "yyyy-MM-dd") : "", at: upd instanceof Date ? upd.getTime() : 0 };
+    ["goals", "hobbies", "food"].forEach(function (f) { p[f] = get(f); });
+    ["squat", "deadlift", "bench"].forEach(function (f) { var n = kg_(r[cols[f] - 1]); p[f] = n ? String(n) : ""; });
     var photo = get("photoData");
-    out.photo = /^data:image\//.test(photo) ? photo : "";
+    p.photo = /^data:image\//.test(photo) ? photo : "";
     // A row with only name and type (from Set up client profiles) counts as not filled in yet.
-    var filled = ["dob", "goals", "hobbies", "food", "squat", "deadlift", "bench", "photo"].some(function (f) { return out[f]; });
-    return filled || out.at ? out : null;
-  }
-  return null;
+    var filled = ["dob", "goals", "hobbies", "food", "squat", "deadlift", "bench", "photo"].some(function (f) { return p[f]; });
+    if (filled || p.at) out[code] = p;
+  });
+  return out;
 }
 
 /** This client's last 20 PBs, newest first. */
@@ -1582,9 +1590,105 @@ function setupProfiles() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var added = syncProfiles_(ss);
   tab_(ss, PB_TAB, PB_HEADERS).setColumnWidth(6, 360);
+  coachTab_(ss);
   ss.setActiveSheet(ss.getSheetByName(PROFILES_TAB));
   SpreadsheetApp.getUi().alert("Done! " + (added ? added + " clients added to the Profiles tab. " : "Every client is already on the Profiles tab. ") +
     "Names and types come from the Clients tab. The green columns fill in when clients complete their profile in the app.\n\n" +
     "When a client logs a weight heavier than their 1RM on back squat, deadlift or bench press, they get a PB pop-up, " +
-    "their 1RM updates here and the PB is listed on the PBs tab. PBs and birthdays also show in your Monday email.");
+    "their 1RM updates here and the PB is listed on the PBs tab. PBs and birthdays also show in your Monday email.\n\n" +
+    "Your own profile goes on the Coach profile tab. Fill it in from the Profile tab of your coach app (or type it there), and clients see it on their ScoutCo HQ tab.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Your coach profile (clients see it) and every client's profile      */
+/* for your coach app.                                                 */
+/* ------------------------------------------------------------------ */
+
+var COACH_TAB = "Coach profile";
+// [field the app uses, label in column A]. Type straight into column B to change anything.
+var COACH_ROWS = [
+  ["photo", "Photo"], ["about", "About me"], ["quals", "Qualifications and experience"],
+  ["hobbies", "Hobbies and interests"], ["food", "Favourite food"], ["updated", "Updated"], ["photoData", "Photo data (for the app)"]
+];
+
+/** The Coach profile tab: one row per item, with the label in column A and your answer in column B. */
+function coachTab_(ss) {
+  var sheet = ss.getSheetByName(COACH_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(COACH_TAB);
+    sheet.appendRow(["Item", "Your answer"]);
+    styleHeader_(sheet, 2);
+    sheet.setColumnWidth(1, 240);
+    sheet.setColumnWidth(2, 520);
+  }
+  var labels = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
+  COACH_ROWS.forEach(function (r) {
+    if (labels.indexOf(r[1].toLowerCase()) === -1) { sheet.appendRow([r[1], ""]); labels.push(r[1].toLowerCase()); }
+  });
+  var dataRow = labels.indexOf(COACH_ROWS[6][1].toLowerCase()) + 1;
+  sheet.getRange(dataRow, 2).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+  if (!sheet.isRowHiddenByUser(dataRow)) sheet.hideRows(dataRow);
+  sheet.getRange(2, 2, sheet.getLastRow() - 1, 1).setVerticalAlignment("top");
+  return sheet;
+}
+
+/** Row number of each item on the Coach profile tab: { about: 3, ... }. */
+function coachRows_(sheet) {
+  var labels = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
+  var rows = {};
+  COACH_ROWS.forEach(function (r) { var at = labels.indexOf(r[1].toLowerCase()); if (at >= 0) rows[r[0]] = at + 1; });
+  return rows;
+}
+
+/** Your profile for the app, or null if the tab isn't there yet. */
+function coachProfile_(ss) {
+  var sheet = ss.getSheetByName(COACH_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var rows = coachRows_(sheet);
+  var vals = sheet.getRange(1, 2, sheet.getLastRow(), 1).getValues();
+  var get = function (f) { return rows[f] ? text_(vals[rows[f] - 1][0]) : ""; };
+  var photo = get("photoData");
+  var upd = rows.updated ? vals[rows.updated - 1][0] : "";
+  return { photo: /^data:image\//.test(photo) ? photo : "", about: get("about"), quals: get("quals"), hobbies: get("hobbies"), food: get("food"),
+    at: upd instanceof Date ? upd.getTime() : 0 };
+}
+
+/** Saves what you typed on the Profile tab of your coach app. */
+function saveCoachProfile_(ss, client, ev) {
+  var sheet = coachTab_(ss), rows = coachRows_(sheet);
+  ["about", "quals", "hobbies", "food"].forEach(function (f) { sheet.getRange(rows[f], 2).setValue(cell_(clip_(ev[f], 2000).trim())); });
+  sheet.getRange(rows.updated, 2).setValue(new Date()).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  var photo = String(ev.photo || "");
+  var ok = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/=]+$/.test(photo) && photo.length <= 48000;
+  if (ok && text_(sheet.getRange(rows.photoData, 2).getValue()) === photo) return;
+  sheet.getRange(rows.photoData, 2).setValue(ok ? photo : "");
+  sheet.getRange(rows.photo, 2).setValue("");
+  if (!ok) return;
+  try {
+    sheet.getRange(rows.photo, 2).setValue(SpreadsheetApp.newCellImage().setSourceUrl(photo).setAltTextTitle("Coach photo").build());
+    sheet.setRowHeight(rows.photo, 120);
+  } catch (err) {
+    sheet.getRange(rows.photo, 2).setValue("✓ in app");
+  }
+}
+
+/** Every active client's profile (and latest PBs) for your coach app, in the Clients tab's order. */
+function clientProfiles_(ss) {
+  var out = [], byCode = {}, profiles = profilesByCode_(ss);
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    var code = normalise_(c.Code);
+    if (!code || isOff_(c.Active) || isCoach_(c.Type)) return;
+    var p = profiles[code] || {};
+    var row = { name: String(c.Name || ""), type: String(c.Type || ""), photo: p.photo || "", dob: p.dob || "",
+      squat: p.squat || "", deadlift: p.deadlift || "", bench: p.bench || "", goals: p.goals || "", hobbies: p.hobbies || "", food: p.food || "",
+      at: p.at || (p.dob || p.goals || p.photo ? 1 : 0), pbs: [] };
+    byCode[code] = row;
+    out.push(row);
+  });
+  rowsOf_(ss, PB_TAB, PB_HEADERS.length).forEach(function (r) {
+    var row = byCode[normalise_(r[7])];
+    if (row) row.pbs.push({ at: r[0] instanceof Date ? r[0].getTime() : 0, lift: text_(r[2]), kg: kg_(r[3]), prev: kg_(r[4]) });
+  });
+  out.forEach(function (row) { row.pbs.sort(function (a, b) { return b.at - a.at; }); row.pbs = row.pbs.slice(0, 5); });
+  return out;
 }
