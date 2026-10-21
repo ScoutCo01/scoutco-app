@@ -8,12 +8,13 @@
  * Sheet tabs it uses:
  *   Clients:  Code | Name | Program | Active | Message | (Link) | Type | Sessions
  *   Blocks:   Program | Block | Start date   (optional: lets the app open on the current week)
- *   Progress: filled in by the app when clients tick exercises
+ *   Progress: filled in by the app when clients tick exercises (Home swap column: what they did instead at home)
  *   Feedback: filled in by the app when clients send session comments (you also get an email)
  *   Weights:  filled in by the app when clients type the weight they used on an exercise
  *   Session notes: filled in by the app when you (Clients Type "Coach") write notes after each client
  *   Check-ins: online clients' weekly pulse check. Type your reply in "Reply from Kirst" and it shows in their app
  *   To-do:    your own to-do list (Task | Done | Added | Done on | ID). Type tasks here or add them in the app
+ *   Home swaps: Exercise | Home swap | How to do it | Video. What clients can do at home instead (ScoutCo → Set up home swaps)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -68,11 +69,17 @@ function doGet(e) {
     return String(r.Program).trim().toLowerCase() === programName.toLowerCase() && String(r.Exercise).trim() !== "";
   });
 
+  var blocks = addStartDates_(ss, programName, groupBlocks_(rows));
+  if (!isCoach_(client.Type)) {
+    try { addHomeSwaps_(ss, blocks); } catch (err) { /* the program still loads, just without swaps */ }
+  }
+
   return json_({
     client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
-    program: { name: programName, blocks: addStartDates_(ss, programName, groupBlocks_(rows)) },
+    program: { name: programName, blocks: blocks },
     weights: weightsFor_(ss, code),
     ticks: ticksFor_(ss, code),
+    swaps: swapsFor_(ss, code),
     checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
     todos: isCoach_(client.Type) ? todosFor_(ss) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING) },
@@ -108,6 +115,20 @@ function ticksFor_(ss, code) {
     var key = String(r[7]);
     if (key.indexOf(prefix) !== 0 || r[6] !== "✓") return;
     out[key.slice(prefix.length)] = r[0] instanceof Date ? r[0].getTime() : 1;
+  });
+  return out;
+}
+
+/** Ticked exercises this client swapped for home: { "<block>|<week>|<session>|<n>": "<home swap>" }. */
+function swapsFor_(ss, code) {
+  var out = {}, prefix = code + "|";
+  var sheet = ss.getSheetByName(PROGRESS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  var col = swapCol_(sheet, false);
+  if (!col) return out;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, col).getValues().forEach(function (r) {
+    var key = String(r[7]), swap = text_(r[col - 1]);
+    if (key.indexOf(prefix) === 0 && r[6] === "✓" && swap) out[key.slice(prefix.length)] = swap;
   });
   return out;
 }
@@ -320,6 +341,7 @@ function doPost(e) {
     var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
     var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
     var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null, todo = null;
+    var progSwap = null; // the Home swap column, found the first time it's needed
     var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var name = String(client.Name || client.Code);
@@ -334,7 +356,13 @@ function doPost(e) {
         } else {
           progress.appendRow(row);
           progKeys.push(key);
+          at = progKeys.length - 1;
         }
+        // What they did instead at home, if they swapped it (blank for the gym version).
+        var swap = clip_(ev.swap, 200).trim();
+        if (progSwap === null) progSwap = swapCol_(progress, false);
+        if (swap && !progSwap) progSwap = swapCol_(progress, true);
+        if (progSwap) progress.getRange(at + 1, progSwap).setValue(cell_(swap));
       } else if (ev.type === "weight") {
         if (!weights) {
           weights = tab_(ss, WEIGHTS_TAB, WEIGHT_HEADERS);
@@ -586,6 +614,7 @@ function onOpen() {
     .addItem("Update weeks left", "updateWeeksLeft")
     .addItem("Set up online clients", "setupOnline")
     .addItem("Set up to-do list", "setupTodo")
+    .addItem("Set up home swaps", "setupHomeSwaps")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -593,6 +622,8 @@ function onOpen() {
     .addToUi();
   try { formatDates_(); } catch (err) { /* not essential */ }
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
+  // New exercises on Programs get a suggested home swap (only once the Home swaps tab is set up).
+  try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss.getSheetByName(SWAPS_TAB)) syncHomeSwaps_(ss); } catch (err) { /* not essential */ }
 }
 
 /** Shows the dates on Progress and Feedback as dd/mm/yyyy (new rows pick this up too). */
@@ -814,15 +845,21 @@ function sendSummary_() {
 
   var stats = {};
   clients.forEach(function (c) {
-    stats[normalise_(c.Code)] = { sessions: {}, ticks: 0, lastTick: null, weights: [], comments: 0, checkin: null };
+    stats[normalise_(c.Code)] = { sessions: {}, ticks: 0, home: 0, lastTick: null, weights: [], comments: 0, checkin: null };
   });
   var codeOf = function (key) { return normalise_(String(key).split("|")[0]); };
 
-  rowsOf_(ss, PROGRESS_TAB, 8).forEach(function (r) {
+  var progSheet = ss.getSheetByName(PROGRESS_TAB);
+  var homeCol = progSheet ? swapCol_(progSheet, false) : 0;
+  rowsOf_(ss, PROGRESS_TAB, Math.max(8, homeCol)).forEach(function (r) {
     var st = stats[codeOf(r[7])];
     if (!st || r[6] !== "✓" || !(r[0] instanceof Date)) return;
     if (!st.lastTick || r[0] > st.lastTick) st.lastTick = r[0];
-    if (r[0] >= since) { st.ticks++; st.sessions[[r[2], r[3], r[4]].join("|")] = true; }
+    if (r[0] >= since) {
+      st.ticks++;
+      st.sessions[[r[2], r[3], r[4]].join("|")] = true;
+      if (homeCol && text_(r[homeCol - 1])) st.home++;
+    }
   });
   rowsOf_(ss, WEIGHTS_TAB, 8).forEach(function (r) {
     var st = stats[codeOf(r[7])];
@@ -879,7 +916,8 @@ function sendSummary_() {
         if (lows.length) g.low.push(name + ": " + lows.join(", "));
       }
     }
-    g.table.push({ name: name, now: [p.now, p.week].filter(Boolean).join(", "), sessions: sessions, ticks: st.ticks,
+    g.table.push({ name: name, now: [p.now, p.week].filter(Boolean).join(", "), sessions: sessions,
+      ticks: st.ticks, home: st.home,
       comments: st.comments, lifts: lifts, opened: opened || "Not yet", pulse: pulse || (g.online ? "No check-in" : "") });
   });
   groups = groups.filter(function (g) { return g.table.length; });
@@ -916,7 +954,7 @@ function sendSummary_() {
       '<table style="border-collapse:collapse;width:100%;font-size:13px"><tr style="background:#ede9fe;text-align:left">' +
       heads.map(function (t) { return "<th " + cell + ">" + h(t) + "</th>"; }).join("") + "</tr>" +
       g.table.map(function (r) {
-        return "<tr>" + [r.name, r.now, r.sessions, r.ticks, r.comments, r.lifts.join(", ") || ""].concat(g.online ? [r.pulse] : [], [r.opened]).map(function (v) {
+        return "<tr>" + [r.name, r.now, r.sessions, r.ticks + (r.home ? " (" + r.home + " swapped for home)" : ""), r.comments, r.lifts.join(", ") || ""].concat(g.online ? [r.pulse] : [], [r.opened]).map(function (v) {
           return "<td " + cell + ">" + h(v) + "</td>";
         }).join("") + "</tr>";
       }).join("") + "</table>";
@@ -939,13 +977,197 @@ function sendSummary_() {
         block("BOOK THEIR NEXT BLOCK (2 weeks or less left)", g.rebook) +
         block("NEEDS SETTING UP", g.setup) +
         "LAST 7 DAYS\n" + g.table.map(function (r) {
-          return "- " + r.name + ": " + plural_(r.sessions, "session") + ", " + plural_(r.ticks, "exercise") + ", " + plural_(r.comments, "comment") +
+          return "- " + r.name + ": " + plural_(r.sessions, "session") + ", " + plural_(r.ticks, "exercise") + (r.home ? " (" + r.home + " swapped for home)" : "") + ", " + plural_(r.comments, "comment") +
             (r.lifts.length ? ". Weights: " + r.lifts.join(", ") : "") + (g.online ? ". Check-in: " + r.pulse : "");
         }).join("\n") + "\n\n";
     }).join("") + ss.getUrl();
 
   MailApp.sendEmail({ to: to, subject: subject, body: text, htmlBody: html });
   return to;
+}
+
+/* ------------------------------------------------------------------ */
+/* Home swaps: a minimal-equipment version of an exercise for days a   */
+/* client can't get to the gym. Squats, deadlifts and bench press stay */
+/* gym only.                                                           */
+/* ------------------------------------------------------------------ */
+
+var SWAPS_TAB = "Home swaps";
+var SWAP_HEADERS = ["Exercise", "Home swap", "How to do it", "Video"];
+var NO_SWAP = "No swap";
+
+/** The main barbell lifts (squat, deadlift, bench press and their variations) can't be swapped. */
+function isGymOnly_(name) {
+  var n = String(name || "").toLowerCase();
+  if (!/\b(squat|deadlift|bench|larsen press|spoto press|rack pull)\b/.test(n)) return false;
+  return !/\b(romanian|rdl|stiff|single-leg|kettlebell|split|bulgarian|goblet|hack|lunge|db|dumbbell|push-up|hip thrust|step-up)\b/.test(n);
+}
+
+/**
+ * Suggested home swaps, used to pre-fill the Home swaps tab. First match wins.
+ * [pattern, home swap, how to do it]. A blank swap means it can already be done at home as written.
+ */
+var SWAP_RULES = [
+  [/no conditioning/, "", ""],
+  [/conditioning circuit/, "Home circuit: burpees / mountain climbers / skipping", "Same work and rest times, rotate through the three."],
+  [/agility ladder/, "Ladder drills on the ground", "Mark a ladder with tape, chalk or a towel line and run the same patterns."],
+  [/skip|shadow|ankle mobility|band pull-apart|band pallof|clam shell|dead bug|plank|push-up|broad jump|bound|burpee|walking lunge|walk cool|hill walk|hill sprint|glute bridge|single-leg hip thrust|single-leg rdl|bulgarian|split squat|goblet squat \(db\)|^goblet squat$|lateral raise|hammer curl|^dumbbell (reverse lunge|romanian|shoulder press)|^db (romanian|walking|hammer|bulgarian|shoulder press)|seated (db|dumbbell) shoulder press|neutral-grip db overhead press|half-kneeling single-arm|push press \(db|overhead dumbbell tricep|single-arm (db|dumbbell) row|walking db lunge|sandbag or db lunges|step-up/, "", ""],
+  [/bike sprint/, "Hill or stair sprints", "Same work and rest times. Walk back down to recover."],
+  [/ski erg|rowing machine|row or run|run or row|easy bike|treadmill/, "Run or brisk walk", "Same time or intervals, done outside. Hills or stairs make it harder."],
+  [/battle rope/, "Fast mountain climbers or burpees", "Same work and rest times."],
+  [/sled/, "Wall push sprints or a backpack hill walk", "Lean into a wall with straight arms and drive the knees hard for the same time, or walk up a hill with a loaded backpack."],
+  [/depth jump/, "Drop from a low step into a squat jump", "Step off a low step, land soft, then jump straight up."],
+  [/box jump|hurdle jump/, "Squat jump", "Land soft and quiet, stand tall and reset before each rep."],
+  [/wall ball/, "DB or backpack thruster", "Squat, then drive the weight overhead as you stand."],
+  [/chest pass/, "Explosive push-up", "Push hard enough that your hands leave the floor (or do it against a wall)."],
+  [/med ball|landmine rotation/, "Band or light DB woodchop", "Rotate through the hips, arms long, same reps each side."],
+  [/kettlebell swing/, "DB swing", "Hold one DB by the end and snap the hips like a kettlebell swing."],
+  [/kettlebell deadlift/, "DB or backpack deadlift", "Slow lower, squeeze the glutes at the top."],
+  [/pallof/, "Band Pallof press", "Anchor the band at chest height (door anchor or a post) and press it out without rotating."],
+  [/face pull/, "Band face pull", "Anchor the band at face height and pull to your eyes, elbows high."],
+  [/external rotation/, "Band external rotation", "Elbow tucked to your side (a rolled towel helps), rotate out slowly."],
+  [/cable fly/, "Band chest fly", "Anchor the band behind you (or loop it around your back) and hug forward."],
+  [/chest fly/, "Floor DB fly", "Lie on the floor so your elbows stop at the ground."],
+  [/pulldown|pull-up|chin-up/, "Band lat pulldown", "Anchor a band high (top of a door) and pull your elbows down to your ribs. Pull-ups if you have a bar."],
+  [/trx|ring row/, "Under-table row", "Lie under a sturdy table, hold the edge and pull your chest up to it. Or a band row."],
+  [/single-arm cable row|cable single-arm row/, "Single-arm band row", "Anchor the band at chest height, pull the elbow back past your ribs."],
+  [/chest-supported|bent-over row|barbell row|pendlay|cable row|seated cable|machine row|t-bar/, "DB or band bent-over row", "Hinge forward with a flat back and pull to your belly button."],
+  [/curl \+ pushdown/, "Band curl + band pushdown", "Stand on the band for curls, then anchor it high for pushdowns."],
+  [/hamstring curl|leg curl|glute-ham|nordic/, "Slider hamstring curl", "On your back, heels on a towel on a smooth floor. Lift the hips and slide the heels in and out."],
+  [/incline (db|dumbbell) curl|bicep curl|cable bicep curl/, "Band or DB curl", "Stand on the band (or use DBs), slow on the way down."],
+  [/pushdown/, "Band tricep pushdown", "Anchor the band high (top of a door) and push down, elbows pinned."],
+  [/skull crusher/, "Floor DB skull crusher", "Lie on the floor, lower the DBs to beside your head."],
+  [/incline (db|dumbbell) press|db incline press/, "Feet-elevated push-up", "Feet on a couch or step. Or a DB floor press."],
+  [/flat db press|db bench press|dumbbell bench press/, "DB floor press", "Lie on the floor, lower until your elbows touch the ground."],
+  [/landmine press/, "Half-kneeling single-arm DB press", "Press up and slightly forward, ribs down."],
+  [/overhead press/, "DB or band overhead press", "Standing, ribs down, squeeze the glutes."],
+  [/hip thrust/, "DB hip thrust off the couch", "Upper back on the couch, DB on the hips. Single-leg if it's too easy."],
+  [/romanian deadlift|barbell rdl|stiff-leg/, "DB or backpack RDL", "Push the hips back, flat back, slow on the way down."],
+  [/good morning/, "Band good morning", "Stand on the band, loop it behind your neck and hinge."],
+  [/hack squat|front squat \/ goblet/, "Goblet squat (DB or backpack)", "Heels raised on a small plate or book if you like, slow on the way down."],
+  [/leg press/, "Goblet squat (DB or backpack)", "3 seconds on the way down. Add a few reps to make up for the lighter load."],
+  [/leg extension/, "Wall sit", "Hold for about as long as your set would take (30-45 s)."],
+  [/adduct/, "Short-lever Copenhagen plank", "Top knee on the couch, lift your hips and hold."],
+  [/abduct/, "Banded crab walk", "Band around the knees, stay low and step sideways."],
+  [/calf raise/, "Single-leg calf raise off a step", "Full stretch at the bottom, pause at the top."],
+  [/cable crunch/, "Kneeling band crunch", "Anchor the band high, kneel and crunch down."],
+  [/ab wheel/, "Plank walk-out", "From standing, walk your hands out to a long plank and back. Or a towel rollout on a smooth floor."],
+  [/hanging/, "Lying leg raise", "Lower back pressed into the floor the whole time."],
+  [/farmer/, "Heavy bag or DB farmer carry", "Fill two bags (or use DBs), walk tall for the same distance or time."],
+  [/suitcase carry/, "Heavy bag or DB suitcase carry", "One side only, don't lean. Same distance each side."]
+];
+
+/** The suggested swap for an exercise: [home swap, how to do it]. */
+function suggestSwap_(name) {
+  if (isGymOnly_(name)) return [NO_SWAP, "Gym only"];
+  var n = String(name || "").toLowerCase().trim();
+  for (var i = 0; i < SWAP_RULES.length; i++) {
+    if (SWAP_RULES[i][0].test(n)) return [SWAP_RULES[i][1], SWAP_RULES[i][2]];
+  }
+  return ["", ""];
+}
+
+function swapKey_(name) { return String(name || "").trim().toLowerCase().replace(/\s+/g, " "); }
+
+/**
+ * The Home swaps tab as { "<exercise>": { name, how, video } or { locked: true } or {} (no swap) }.
+ * Type "No swap" in the Home swap column to keep an exercise gym only, or leave it blank for no swap button.
+ */
+function homeSwaps_(ss) {
+  var out = {};
+  var sheet = ss.getSheetByName(SWAPS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return out;
+  sheet.getRange(2, 1, sheet.getLastRow() - 1, SWAP_HEADERS.length).getDisplayValues().forEach(function (r) {
+    var k = swapKey_(r[0]);
+    if (!k) return;
+    var swap = text_(r[1]);
+    if (/^(no swap|gym only)/i.test(swap)) out[k] = { locked: true };
+    else if (swap) out[k] = { name: swap, how: text_(r[2]), video: text_(r[3]) };
+    else out[k] = {};
+  });
+  return out;
+}
+
+/** Adds each exercise's home swap (ex.home) or ex.locked, from the Home swaps tab or the built-in suggestions. */
+function addHomeSwaps_(ss, blocks) {
+  var tab = homeSwaps_(ss);
+  blocks.forEach(function (b) {
+    b.weeks.forEach(function (w) {
+      w.days.forEach(function (d) {
+        d.exercises.forEach(function (x) {
+          var s = tab[swapKey_(x.name)];
+          if (!s) {
+            var sug = suggestSwap_(x.name);
+            s = sug[0] === NO_SWAP ? { locked: true } : sug[0] ? { name: sug[0], how: sug[1] } : {};
+          }
+          if (s.locked) x.locked = true;
+          else if (s.name) x.home = s;
+        });
+      });
+    });
+  });
+  return blocks;
+}
+
+/**
+ * Makes sure every exercise on the Programs tab has a row on the Home swaps tab, filled in with a
+ * suggestion. Rows already there are never changed, so your own edits are kept. Returns how many it added.
+ */
+function syncHomeSwaps_(ss) {
+  var sheet = ss.getSheetByName(SWAPS_TAB);
+  var isNew = !sheet;
+  if (isNew) {
+    sheet = ss.insertSheet(SWAPS_TAB);
+    sheet.appendRow(SWAP_HEADERS);
+    styleHeader_(sheet, SWAP_HEADERS.length);
+    sheet.setColumnWidth(1, 280);
+    sheet.setColumnWidth(2, 280);
+    sheet.setColumnWidth(3, 460);
+    sheet.setColumnWidth(4, 200);
+    // Gym only rows go grey, even ones you change later.
+    var rule = SpreadsheetApp.newConditionalFormatRule().whenFormulaSatisfied('=REGEXMATCH(LOWER($B2),"^(no swap|gym only)")')
+      .setBackground("#e5e7eb").setFontColor("#6b7280").setRanges([sheet.getRange("A2:D")]).build();
+    sheet.setConditionalFormatRules([rule]);
+  }
+  var have = {};
+  if (sheet.getLastRow() > 1) {
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getDisplayValues().forEach(function (r) { have[swapKey_(r[0])] = true; });
+  }
+  var add = [];
+  readTab_(ss, PROGRAMS_TAB).forEach(function (r) {
+    var name = text_(r.Exercise), k = swapKey_(name);
+    if (!k || have[k]) return;
+    have[k] = true;
+    var sug = suggestSwap_(name);
+    add.push([cell_(name), sug[0], sug[1], ""]);
+  });
+  if (isNew) add.sort(function (a, b) { return a[0].toLowerCase() < b[0].toLowerCase() ? -1 : 1; });
+  if (add.length) sheet.getRange(sheet.getLastRow() + 1, 1, add.length, SWAP_HEADERS.length).setValues(add);
+  return add.length;
+}
+
+/** ScoutCo menu → Set up home swaps. */
+function setupHomeSwaps() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var added = syncHomeSwaps_(ss);
+  ss.setActiveSheet(ss.getSheetByName(SWAPS_TAB));
+  SpreadsheetApp.getUi().alert("Done! " + (added ? added + " exercises added. " : "Every exercise is already listed. ") +
+    "Clients see a \"Swap for home\" button on any exercise with something in the Home swap column.\n\n" +
+    "Change any swap by typing over it. Type \"No swap\" to keep an exercise gym only, or clear the cell for no button. " +
+    "New exercises you add to Programs get a row here each time you open the sheet.");
+}
+
+/** The Progress tab's "Home swap" column number (adds the heading if it isn't there yet). */
+function swapCol_(sheet, create) {
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var h = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var at = h.indexOf("home swap");
+  if (at >= 0) return at + 1;
+  if (!create) return 0;
+  var col = width + 1;
+  sheet.getRange(1, col).setValue("Home swap").setFontWeight("bold").setBackground("#ede9fe");
+  sheet.setColumnWidth(col, 220);
+  return col;
 }
 
 function plural_(n, word) { return n + " " + word + (n === 1 ? "" : "s"); }

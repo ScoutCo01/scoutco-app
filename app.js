@@ -10,6 +10,7 @@
   var KEY_COMMENTS = "scoutco.comments";
   var KEY_TICKS = "scoutco.ticks";
   var KEY_WEIGHTS = "scoutco.weights";
+  var KEY_SWAPS = "scoutco.swaps";
   var KEY_CHECKINS = "scoutco.checkins";
   var KEY_TODOS = "scoutco.todos";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
@@ -120,6 +121,7 @@
     state.data = data;
     mergeWeights(data && data.weights);
     mergeTicks(data && data.ticks);
+    mergeSwaps(data && data.ticks, data && data.swaps);
     mergeCheckins(data && data.checkins);
     mergeTodos(data && data.todos);
     if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
@@ -265,6 +267,34 @@
       if (!t[k] || (t[k] === 1 && at > 1)) { t[k] = at; changed = true; }
     });
     if (changed) save(KEY_TICKS, t);
+  }
+
+  // ---------- home swaps ----------
+  // Saved on the phone as { "<code>|<block>|<week>|<session>|<n>": { name: "Band lat pulldown", at: ms } }.
+  // The exercise's home version comes from the Home swaps tab (ex.home); squats, deadlifts and bench (ex.locked) stay gym only.
+  function getSwaps() { return load(KEY_SWAPS, {}); }
+  function setSwap(key, home) {
+    var all = getSwaps();
+    if (home) all[key] = { name: home.name, at: Date.now() }; else delete all[key];
+    save(KEY_SWAPS, all);
+  }
+  // The home version to show for this exercise, or null for the gym version.
+  function activeSwap(ex, key, swaps) {
+    return ex.home && ex.home.name && swaps[key] ? ex.home : null;
+  }
+  // The sheet remembers swaps on ticked exercises, so they follow the client to a new phone.
+  function mergeSwaps(serverTicks, server) {
+    if (!serverTicks || !state.code) return;
+    server = server || {};
+    var all = getSwaps(), changed = false, waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "tick") waiting[x.key] = true; });
+    Object.keys(serverTicks).forEach(function (rest) {
+      if (waiting[rest]) return; // not saved to the sheet yet: the phone is newer
+      var k = state.code + "|" + rest;
+      if (server[rest]) { if (!all[k] || all[k].name !== server[rest]) { all[k] = { name: server[rest], at: 0 }; changed = true; } }
+      else if (all[k]) { delete all[k]; changed = true; }
+    });
+    if (changed) save(KEY_SWAPS, all);
   }
 
   // A Clients row with Type "Coach" is the coach's own schedule: each row is a client,
@@ -813,18 +843,27 @@
     var week = weeks.filter(function (w) { return w.name === state.week; })[0];
     var ticks = getTicks();
     var weights = getWeights();
+    var swaps = isCoach() ? {} : getSwaps();
     $("days").innerHTML = !week ? "" : week.days.map(function (day, di) {
       var done = 0;
       var dayKey = scope(week.name, day.name);
       var where = { block: state.block || "", week: week.name, session: day.name };
       state.info[dayKey] = where;
+      var swappable = 0, swapped = 0;
+      day.exercises.forEach(function (ex, i) {
+        if (isCoach() || !ex.home || !ex.home.name) return;
+        swappable++;
+        if (swaps[tickKey(week.name, day.name, i)]) swapped++;
+      });
       var items = day.exercises.map(function (ex, i) {
         var k = tickKey(week.name, day.name, i);
+        var sw = isCoach() ? null : activeSwap(ex, k, swaps);
         state.info[k] = { block: where.block, week: where.week, session: where.session,
-          exercise: (ex.label ? ex.label + " " : "") + ex.name, name: ex.name, key: k.slice(state.code.length + 1) };
+          exercise: (ex.label ? ex.label + " " : "") + ex.name, name: sw ? sw.name : ex.name, swap: sw ? sw.name : "",
+          home: isCoach() ? null : ex.home, key: k.slice(state.code.length + 1) };
         var isDone = !!ticks[k];
         if (isDone) done++;
-        return exerciseHtml(ex, k, isDone, weights);
+        return exerciseHtml(ex, k, isDone, weights, sw, swapped > 0);
       }).join("");
       var total = day.exercises.length;
       var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === firstUnfinished(week, ticks));
@@ -838,7 +877,8 @@
             '<svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
           "</div>" +
         "</button>" +
-        '<div class="day-body">' + items +
+        '<div class="day-body">' +
+          (swappable ? swapAllHtml(dayKey, swapped === swappable) : "") + items +
           (done ? '<div class="day-foot"><button class="btn small ghost" data-clear="' + esc(dayKey) + '">Clear ticks</button></div>' : "") +
           (isCoach() ? "" : commentHtml(dayKey)) +
         "</div>" +
@@ -871,30 +911,53 @@
     return -1;
   }
 
-  function exerciseHtml(ex, key, isDone, weights) {
+  // "Training at home today?" at the top of a session: swaps every exercise that has a home version.
+  function swapAllHtml(dayKey, allSwapped) {
+    return '<div class="swap-all">' +
+      (allSwapped
+        ? '<span>Home version of this session</span><button class="btn small ghost" data-swapall="' + esc(dayKey) + '">Back to gym</button>'
+        : '<span>Can\'t get to the gym today?</span><button class="btn small" data-swapall="' + esc(dayKey) + '">⇄ Swap all for home</button>') +
+    "</div>";
+  }
+
+  // sw: the home version being shown instead (or null). homeDay: something in this session is swapped.
+  function exerciseHtml(ex, key, isDone, weights, sw, homeDay) {
+    var name = sw ? sw.name : ex.name;
     var stats = [
-      ["Sets", ex.sets], ["Reps", ex.reps], ["Load", ex.load], ["Tempo", ex.tempo], ["Rest", ex.rest]
+      ["Sets", ex.sets], ["Reps", ex.reps], ["Load", sw ? "" : ex.load], ["Tempo", ex.tempo], ["Rest", ex.rest]
     ].filter(function (s) { return s[1] !== "" && s[1] != null; })
       .map(function (s) { return '<span class="stat"><b>' + s[0] + "</b>" + esc(s[1]) + "</span>"; }).join("");
-    var video = safeUrl(ex.video);
-    return '<div class="ex' + (isDone ? " done" : "") + '">' +
-      '<button class="check" data-tick="' + esc(key) + '" aria-pressed="' + isDone + '" aria-label="Mark ' + esc(ex.name) + ' done">' +
+    var video = safeUrl(sw ? sw.video : ex.video);
+    var notes = sw ? sw.how : ex.notes;
+    var swapLine = "";
+    if (sw) {
+      swapLine = '<div class="ex-swap on"><span class="swap-tag">Home swap</span><span class="muted">instead of ' + esc(ex.name) + "</span>" +
+        '<button class="link-btn" data-swap="' + esc(key) + '">Back to gym version</button></div>';
+    } else if (ex.home && ex.home.name && !isCoach()) {
+      swapLine = '<div class="ex-swap"><button class="swap-btn" data-swap="' + esc(key) + '">⇄ Swap for home</button></div>';
+    } else if (ex.locked && homeDay) {
+      swapLine = '<div class="ex-swap"><span class="muted small">🔒 Gym only, this one can\'t be swapped</span></div>';
+    }
+    return '<div class="ex' + (isDone ? " done" : "") + (sw ? " swapped" : "") + '">' +
+      '<button class="check" data-tick="' + esc(key) + '" aria-pressed="' + isDone + '" aria-label="Mark ' + esc(name) + ' done">' +
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0b1a14" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>' +
       "</button>" +
       '<div class="ex-main">' +
-        '<div class="ex-name">' + (ex.label ? '<span class="ex-label">' + esc(ex.label) + "</span>" : "") + esc(ex.name) + "</div>" +
+        '<div class="ex-name">' + (ex.label ? '<span class="ex-label">' + esc(ex.label) + "</span>" : "") + esc(name) + "</div>" +
         (stats ? '<div class="ex-stats">' + stats + "</div>" : "") +
-        (ex.notes ? '<div class="ex-notes">' + esc(ex.notes) + "</div>" : "") +
+        (notes ? '<div class="ex-notes">' + esc(notes) + "</div>" : "") +
         (video ? '<a class="ex-video" href="' + esc(video) + '" target="_blank" rel="noopener">▶ Watch demo</a>' : "") +
-        weightHtml(ex, key, weights) +
+        swapLine +
+        weightHtml(ex, key, weights, name) +
       "</div>" +
     "</div>";
   }
 
-  function weightHtml(ex, key, weights) {
+  // name: the exercise as shown (the home swap if swapped), so "Last time" matches what they're doing.
+  function weightHtml(ex, key, weights, name) {
     var saved = weights[key];
     var value = state.weightDrafts[key] != null ? state.weightDrafts[key] : (saved ? saved.w : "");
-    var prev = lastTime(key, ex.name, weights);
+    var prev = lastTime(key, name || ex.name, weights);
     var id = "w-" + key;
     if (isCoach()) {
       return '<div class="ex-log coach-notes">' +
@@ -1002,6 +1065,31 @@
       render();
       return;
     }
+    var swapBtn = e.target.closest("[data-swap]");
+    if (swapBtn) {
+      var sk = swapBtn.getAttribute("data-swap");
+      var si = state.info[sk] || {};
+      setSwap(sk, getSwaps()[sk] ? null : si.home);
+      keepOpen(swapBtn);
+      render();
+      if (getTicks()[sk]) sendTick(sk, true); // already ticked: tell the sheet what they did instead
+      return;
+    }
+    var swapAll = e.target.closest("[data-swapall]");
+    if (swapAll) {
+      var sp = state.code + "|" + swapAll.getAttribute("data-swapall") + "|";
+      var keys = Object.keys(state.info).filter(function (key) {
+        return key.indexOf(sp) === 0 && /^\d+$/.test(key.slice(sp.length)) && state.info[key].home && state.info[key].home.name;
+      });
+      var cur = getSwaps();
+      var allOn = keys.every(function (key) { return cur[key]; });
+      keys.forEach(function (key) { setSwap(key, allOn ? null : state.info[key].home); });
+      keepOpen(swapAll);
+      render();
+      var tk = getTicks();
+      keys.forEach(function (key) { if (tk[key]) sendTick(key, true); });
+      return;
+    }
     var clear = e.target.closest("[data-clear]");
     if (clear) {
       var prefix = state.code + "|" + clear.getAttribute("data-clear") + "|";
@@ -1065,7 +1153,7 @@
 
   function sendTick(k, on) {
     var i = state.info[k];
-    if (i) queue({ type: "tick", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.exercise, done: on });
+    if (i) queue({ type: "tick", key: i.key, block: i.block, week: i.week, session: i.session, exercise: i.exercise, done: on, swap: i.swap || "" });
   }
 
   function keepOpen(el) {
@@ -1146,7 +1234,18 @@
   }
   function demoData() {
     function ex(label, name, sets, reps, load, rest, notes, video) {
-      return { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
+      var x = { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
+      // Home swaps, as the sheet would send them.
+      var homes = {
+        "romanian deadlift": ["DB or backpack RDL", "Push the hips back, flat back, slow on the way down."],
+        "chin-up": ["Band lat pulldown", "Anchor a band high (top of a door) and pull your elbows down to your ribs."],
+        "half-kneeling landmine press": ["Half-kneeling single-arm DB press", "Press up and slightly forward, ribs down."],
+        "chest-supported row": ["DB or band bent-over row", "Hinge forward with a flat back and pull to your belly button."]
+      };
+      var h = homes[name.toLowerCase()];
+      if (/squat$|deadlift|bench press/i.test(name) && !h && !/split/i.test(name)) x.locked = true;
+      else if (h && h[0]) x.home = { name: h[0], how: h[1] };
+      return x;
     }
     return {
       client: { name: "Demo Athlete", type: "Online only", sessions: "Train on your own schedule, 3 sessions a week", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
