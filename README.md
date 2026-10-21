@@ -68,6 +68,18 @@ Changes are live as soon as you type them. Clients see them the next time they o
 
 These tabs are created automatically (or by **ScoutCo → Set up tabs**). If a client is offline, the app keeps their ticks and comments and sends them when they're back online.
 
+## Home swaps (training at home)
+
+If a client can't get to the gym, they can tap **⇄ Swap for home** on an exercise (or **Swap all for home** at the top of a session) to see a version they can do with minimal equipment: bodyweight, bands or light dumbbells. Sets, reps and rest stay the same; the load is hidden and your "How to do it" note shows instead. Back squat, deadlift and bench press (and their barbell variations) are gym only and can't be swapped. Other squats like front or goblet squats can be swapped.
+
+The swaps live on the **Home swaps** tab (Exercise | Home swap | How to do it | Video). Choose **ScoutCo → Set up home swaps** once and it lists every exercise on your Programs tab with a suggested swap. Then:
+
+- Type over any swap or note to change it.
+- Type `No swap` in **Home swap** to keep an exercise gym only (those rows go grey).
+- Leave **Home swap** empty when the exercise can already be done at home (no button shows).
+
+New exercises you add to Programs get a row with a suggestion each time you open the sheet. When a client ticks a swapped exercise, what they did shows in the **Home swap** column of the Progress tab, and the Monday email says how many exercises each client swapped.
+
 ## Weeks left (when to write the next block)
 
 The **Weeks left** tab shows every active client with their current block and week, how many written weeks they have left (counting this week), and the date their last written week ends. Nothing needs ticking: it works it out from the Blocks tab start dates and the number of weeks on the Programs tab.

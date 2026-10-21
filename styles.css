@@ -314,3 +314,13 @@ main { max-width: 640px; margin: 0 auto; padding: 0 16px; }
 }
 .site-link svg { flex: 0 0 auto; color: var(--accent-strong); }
 .site-link:active { border-color: var(--accent); }
+
+/* Home swaps */
+.swap-all { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: var(--surface-2); font-size: 14px; }
+.swap-all span { color: var(--muted); }
+.ex-swap { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px; font-size: 13px; }
+.swap-btn { border: 1px dashed var(--border); background: transparent; color: var(--accent-strong); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; font-weight: 600; }
+.swap-btn:active { background: var(--surface-2); }
+.swap-tag { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 700; }
+.link-btn { border: 0; background: none; color: var(--accent-strong); font: inherit; font-size: 13px; font-weight: 600; padding: 2px 0; text-decoration: underline; }
+.ex.swapped { box-shadow: inset 3px 0 0 var(--accent); }
