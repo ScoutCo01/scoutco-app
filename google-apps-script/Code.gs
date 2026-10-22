@@ -681,6 +681,8 @@ function onOpen() {
   try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss.getSheetByName(SWAPS_TAB)) syncHomeSwaps_(ss); } catch (err) { /* not essential */ }
   // New clients get a row on Profiles, and names and types stay in step with the Clients tab.
   try { var ss2 = SpreadsheetApp.getActiveSpreadsheet(); if (ss2.getSheetByName(PROFILES_TAB)) syncProfiles_(ss2); } catch (err) { /* not essential */ }
+  // Draft renewal notices for anyone whose next block starts within 4 weeks.
+  try { renewalsDue_(SpreadsheetApp.getActiveSpreadsheet()); } catch (err) { /* not essential */ }
 }
 
 /** Shows the dates on Progress and Feedback as dd/mm/yyyy (new rows pick this up too). */
@@ -996,10 +998,18 @@ function sendSummary_() {
   groups = groups.filter(function (g) { return g.table.length; });
   groups.forEach(function (g) { g.table.sort(function (a, b) { return a.sessions - b.sessions || a.name.localeCompare(b.name); }); });
 
+  var renewals = [];
+  try {
+    renewals = renewalsDue_(ss).map(function (r) {
+      return r.name + ": next block starts " + fmt(r.start) + ", send by " + fmt(r.sendBy) + (r.sendBy < now ? " (due now)" : "");
+    });
+  } catch (err) { /* summary still useful */ }
+
   var count = function (k) { return groups.reduce(function (n, g) { return n + (g[k] ? g[k].length : 0); }, 0); };
   var to = Session.getEffectiveUser().getEmail();
   if (!to) return "";
   var subject = "ScoutCo weekly summary, " + fmt(now) +
+    (renewals.length ? " · " + renewals.length + " renewal" + (renewals.length === 1 ? "" : "s") + " to send" : "") +
     (count("quiet") ? " · " + count("quiet") + " to check in with" : "") +
     (count("rebook") ? " · " + count("rebook") + " to rebook" : "") +
     (count("reply") ? " · " + count("reply") + " check-in" + (count("reply") === 1 ? "" : "s") + " to reply to" : "") +
@@ -1036,6 +1046,7 @@ function sendSummary_() {
   };
   var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#111827;max-width:760px">' +
     "<p>Here's how your clients went from " + h(fmt(since)) + " to " + h(fmt(now)) + ".</p>" +
+    list("📋 Renewal notices to send", "A draft is ready on the Renewals tab. Check the time, price and payment, then tick Send to app.", renewals, "#7c3aed") +
     list("🏆 PBs this week", "New 1RMs logged in the app.", celebrate.pbs, "#047857") +
     list("🎂 Birthdays coming up", "In the next 7 days (from the Profiles tab).", celebrate.birthdays, "#7c3aed") +
     groups.map(section).join("") +
@@ -1045,6 +1056,7 @@ function sendSummary_() {
 
   var block = function (title, items) { return items && items.length ? title + "\n- " + items.join("\n- ") + "\n\n" : ""; };
   var text = "ScoutCo weekly summary, " + fmt(since) + " to " + fmt(now) + "\n\n" +
+    block("RENEWAL NOTICES TO SEND (drafts are on the Renewals tab: check, then tick Send to app)", renewals) +
     block("PBS THIS WEEK", celebrate.pbs) + block("BIRTHDAYS COMING UP", celebrate.birthdays) +
     groups.map(function (g) {
       return "===== " + g.title.toUpperCase() + " (" + g.table.length + ") =====\n\n" +
@@ -2540,7 +2552,7 @@ function renewalFor_(ss, client) {
     var id = String(v[c.ID - 1] || "").trim();
     if (!id) { id = Utilities.getUuid().slice(0, 8); sheet.getRange(i + 2, c.ID).setValue(id); }
     var status = get("Status");
-    if (!status && c.Status) sheet.getRange(i + 2, c.Status).setValue("Waiting");
+    if ((!status || /^draft/i.test(status)) && c.Status) sheet.getRange(i + 2, c.Status).setValue("Waiting");
     var price = get("Price per block");
     if (/^\d/.test(price)) price = "$" + price;
     var replyBy = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 15);
@@ -2572,4 +2584,88 @@ function saveRenewalSeen_(ss, client, ev) {
     if (cSeen && !vals[i][cSeen - 1]) sheet.getRange(i + 2, cSeen).setValue(new Date());
     return;
   }
+}
+
+/**
+ * Works out when each client's next 12-week block starts (from the start date on their
+ * Agreements row, every 12 weeks after that). Within 4 weeks of it, adds a draft row on the
+ * Renewals tab (copying their last time, price and payment) with "Send to app" unticked,
+ * so you only check it and tick. Type "Not renewing" in a row's Status to skip that client.
+ * Returns [{ name, start, sendBy, status }] for the Monday email.
+ */
+function renewalsDue_(ss) {
+  var agSheet = ss.getSheetByName(AGREEMENTS_TAB), rnSheet = ss.getSheetByName(RENEWALS_TAB);
+  if (!agSheet || !rnSheet || agSheet.getLastRow() < 2) return [];
+  var tz = ss.getSpreadsheetTimeZone();
+  var now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var day = 864e5, key = function (d) { return Utilities.formatDate(d, tz, "yyyy-MM-dd"); };
+  var active = {};
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    if (String(c.Code || "").trim() && !isOff_(c.Active) && !isCoach_(c.Type)) active[String(c.Name || "").trim().toLowerCase()] = String(c.Name || "").trim();
+  });
+
+  // Each client's agreement: first block start and their details.
+  var ac = agreementCols_(agSheet), people = {};
+  agSheet.getRange(2, 1, agSheet.getLastRow() - 1, ac.width).getValues().forEach(function (r) {
+    var nm = String(r[ac.Client - 1] || "").trim().toLowerCase();
+    var start = ac["Start date"] ? toDate_(r[ac["Start date"] - 1]) : null;
+    if (!active[nm] || !start || (ac.Status && /not renewing|ended|stopped/i.test(String(r[ac.Status - 1])))) return;
+    people[nm] = { start: start, time: r[ac["Session day and time"] - 1], price: r[ac["Price per block"] - 1], payment: r[ac.Payment - 1], stop: false, sent: {} };
+  });
+
+  // Renewal rows already there: which blocks are covered, and the latest details to copy.
+  var rh = rnSheet.getRange(1, 1, 1, rnSheet.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var rc = {}; RENEWAL_HEADERS.forEach(function (n) { rc[n] = rh.indexOf(n.toLowerCase()) + 1; });
+  if (rnSheet.getLastRow() >= 2) {
+    rnSheet.getRange(2, 1, rnSheet.getLastRow() - 1, rh.length).getValues().forEach(function (r) {
+      var p = people[String(r[rc.Client - 1] || "").trim().toLowerCase()];
+      var s = toDate_(r[rc["Next block starts"] - 1]);
+      if (!p || !s) return;
+      var status = rc.Status ? String(r[rc.Status - 1] || "") : "";
+      if (/not renewing|ended|stopped/i.test(status)) p.stop = true;
+      p.sent[key(s)] = r[rc["Send to app"] - 1] === true ? (/^got it/i.test(status) ? "Seen" : "Sent") : "Draft";
+      if (!p.lastRow || s > p.lastRow) { p.lastRow = s; p.time = r[rc["Session day and time"] - 1] || p.time; p.price = r[rc["Price per block"] - 1] || p.price; p.payment = r[rc.Payment - 1] || p.payment; }
+    });
+  }
+
+  var out = [], add = [];
+  Object.keys(people).forEach(function (nm) {
+    var p = people[nm];
+    if (p.stop) return;
+    var s0 = new Date(p.start.getFullYear(), p.start.getMonth(), p.start.getDate());
+    var k = Math.floor((today - s0) / (84 * day)) + 1;
+    if (k < 1) return; // first block hasn't started yet
+    var next = new Date(s0.getFullYear(), s0.getMonth(), s0.getDate() + 84 * k);
+    var left = Math.round((next - today) / day);
+    if (left > 28) return;
+    var state = p.sent[key(next)];
+    // Also count a row typed a few days either side of the worked-out date.
+    if (!state) Object.keys(p.sent).forEach(function (d) { if (Math.abs(new Date(d) - next) <= 7 * day) state = p.sent[d]; });
+    if (!state) {
+      add.push([active[nm], next, p.time || "", p.price || "", p.payment || "", false]);
+      state = "Draft";
+    }
+    if (state === "Draft") {
+      out.push({ name: active[nm], start: next, sendBy: new Date(next.getFullYear(), next.getMonth(), next.getDate() - 21) });
+    }
+  });
+  if (add.length) {
+    var lock = LockService.getScriptLock();
+    if (lock.tryLock(10000)) {
+      try {
+        add.forEach(function (row) {
+          var r = rnSheet.getLastRow() + 1, vals = [];
+          for (var i = 0; i < rh.length; i++) vals.push("");
+          vals[rc.Client - 1] = row[0]; vals[rc["Next block starts"] - 1] = row[1];
+          if (rc["Session day and time"]) vals[rc["Session day and time"] - 1] = row[2];
+          if (rc["Price per block"]) vals[rc["Price per block"] - 1] = row[3];
+          if (rc.Payment) vals[rc.Payment - 1] = row[4];
+          if (rc.Status) vals[rc.Status - 1] = "Draft: check and tick Send to app";
+          rnSheet.getRange(r, 1, 1, rh.length).setValues([vals]);
+          if (rc["Send to app"]) rnSheet.getRange(r, rc["Send to app"]).insertCheckboxes().setValue(false);
+        });
+      } finally { lock.releaseLock(); }
+    }
+  }
+  return out.sort(function (a, b) { return a.start - b.start; });
 }
