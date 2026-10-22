@@ -20,6 +20,7 @@
  *   Lift Club Community: posts, replies and reactions from every client and coach. Tick Hide to take one down
  *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
+ *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -97,6 +98,7 @@ function doGet(e) {
     clients: isCoach_(client.Type) ? safely_(function () { return clientProfiles_(ss); }, []) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING), pushAppId: setting_(ss, PUSH_APP_SETTING) },
     videos: safely_(function () { return videosFor_(ss, code, isCoach_(client.Type)); }, []),
+    agreement: isCoach_(client.Type) ? undefined : safely_(function () { return agreementFor_(ss, client); }, null),
     community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0), me: safely_(function () { return personId_(code, communitySalt_()); }, "") },
     updated: new Date().toISOString()
   });
@@ -355,7 +357,7 @@ function doPost(e) {
   }
 
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [];
+  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [], signed = [];
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -446,6 +448,8 @@ function doPost(e) {
         if (!isCoach_(client.Type)) saveProfile_(ss, client, ev);
       } else if (ev.type === "coachprofile") {
         if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
+      } else if (ev.type === "agreement") {
+        if (!isCoach_(client.Type)) { var ag = saveAgreement_(ss, client, ev); if (ag) signed.push(ag); }
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
       } else if (ev.type === "videoreply" || ev.type === "videohide") {
@@ -470,6 +474,7 @@ function doPost(e) {
 
   if (comments.length) notify_(ss, client, comments);
   if (checkins.length) notifyCheckin_(ss, client, checkins);
+  if (signed.length) notifyAgreement_(ss, signed);
   if (posted.length) notifyCommunity_(ss, client, posted);
   if (posted.length) safely_(function () { pushCommunity_(ss, client, posted); }, null);
   replies.forEach(function (r) {
@@ -660,6 +665,7 @@ function onOpen() {
     .addItem("Set up push notifications", "setupPush")
     .addItem("Send me a test notification", "testPush")
     .addItem("Set up videos", "setupVideos")
+    .addItem("Set up agreements", "setupAgreements")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -2331,4 +2337,144 @@ function communityPhotoOk_(id) {
     while (parents.hasNext()) if (parents.next().getId() === want) return id;
     return "";
   }, "");
+}
+
+/* ------------------------------------------------------------------ */
+/* Client agreements: you fill in a row, tick "Send to app", and the   */
+/* client reads and signs it in their app. They only sign once.        */
+/* ------------------------------------------------------------------ */
+
+var AGREEMENTS_TAB = "Agreements";
+var AGREEMENT_HEADERS = ["Client", "Agreement", "Start date", "Session day and time", "Price per block", "Payment", "Under 18",
+  "Send to app", "Status", "Signed by", "Signed on", "Photos and videos", "Parent or guardian", "Relationship",
+  "Parent phone and email", "Emergency contact", "Copy of agreement", "ID"];
+var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online"];
+var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity"];
+
+/** ScoutCo menu → Set up agreements. Safe to run again: it only adds what's missing. */
+function setupAgreements() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(AGREEMENTS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(AGREEMENTS_TAB);
+    sheet.getRange(1, 1, 1, AGREEMENT_HEADERS.length).setValues([AGREEMENT_HEADERS]);
+    styleHeader_(sheet, AGREEMENT_HEADERS.length);
+  }
+  var n = sheet.getMaxRows() - 1;
+  var clients = ss.getSheetByName(CLIENTS_TAB);
+  if (clients) {
+    var nameCol = clients.getRange(1, 1, 1, clients.getLastColumn()).getValues()[0]
+      .map(function (h) { return String(h).trim().toLowerCase(); }).indexOf("name") + 1;
+    if (nameCol) sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInRange(clients.getRange(2, nameCol, clients.getMaxRows() - 1, 1), true).setAllowInvalid(true).build());
+  }
+  var list = function (vals) { return SpreadsheetApp.newDataValidation().requireValueInList(vals, true).setAllowInvalid(true).build(); };
+  sheet.getRange(2, 2, n, 1).setDataValidation(list(AGREEMENT_TYPES));
+  sheet.getRange(2, 3, n, 1).setNumberFormat("dd/mm/yyyy");
+  sheet.getRange(2, 6, n, 1).setDataValidation(list(AGREEMENT_PAYMENTS));
+  sheet.getRange(2, 7, n, 1).setDataValidation(list(["No", "Yes"]));
+  sheet.getRange(2, 8, n, 1).insertCheckboxes();
+  sheet.getRange(2, 9, n, AGREEMENT_HEADERS.length - 8).setBackground("#f3f4f6");
+  sheet.getRange(2, 11, n, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  sheet.getRange(1, 9).setNote("Grey columns fill in by themselves when the client signs in the app.");
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 160).setColumnWidth(2, 170).setColumnWidth(4, 170).setColumnWidth(6, 200).setColumnWidth(17, 260);
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Done! To send a client their agreement:\n\n" +
+    "1. Add a row on the Agreements tab: pick the client, the agreement type, start date, session day and time (face to face only), price per block, how they'll pay, and whether they're under 18.\n" +
+    "2. Tick \"Send to app\".\n\n" +
+    "Next time they open the app they'll see \"Your agreement is ready to sign\". When they sign, the grey columns fill in (including a full copy of what they agreed to) and you get an email.\n\n" +
+    "Clients only sign once. It carries over each time their block renews.");
+}
+
+/** The columns of the Agreements tab, found by heading so you can move them around. */
+function agreementCols_(sheet) {
+  var h = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var out = { width: h.length };
+  AGREEMENT_HEADERS.forEach(function (name) { out[name] = h.indexOf(name.toLowerCase()) + 1; });
+  return out;
+}
+
+/** The newest agreement sent to this client (by name), or null. Gives it an ID the first time. */
+function agreementFor_(ss, client) {
+  var sheet = ss.getSheetByName(AGREEMENTS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var c = agreementCols_(sheet);
+  if (!c.Client || !c["Send to app"] || !c.ID) return null;
+  var name = String(client.Name || "").trim().toLowerCase();
+  if (!name) return null;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width);
+  var vals = rows.getValues(), shown = rows.getDisplayValues();
+  var at = -1;
+  for (var i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][c.Client - 1]).trim().toLowerCase() === name && vals[i][c["Send to app"] - 1] === true) { at = i; break; }
+  }
+  if (at < 0) return null;
+  var v = vals[at], d = shown[at], row = at + 2;
+  var get = function (col) { return c[col] ? String(d[c[col] - 1] || "").trim() : ""; };
+  var id = c.ID ? String(v[c.ID - 1] || "").trim() : "";
+  var status = get("Status");
+  if (!id) {
+    id = Utilities.getUuid().slice(0, 8);
+    sheet.getRange(row, c.ID).setValue(id);
+  }
+  if (!status && c.Status) sheet.getRange(row, c.Status).setValue("Waiting to sign");
+  var start = c["Start date"] ? toDate_(v[c["Start date"] - 1]) : null;
+  var price = get("Price per block");
+  if (/^\d/.test(price)) price = "$" + price;
+  var signedOn = c["Signed on"] ? v[c["Signed on"] - 1] : "";
+  return {
+    id: id,
+    type: get("Agreement"),
+    start: start ? Utilities.formatDate(start, ss.getSpreadsheetTimeZone(), "d MMMM yyyy") : get("Start date"),
+    time: get("Session day and time"),
+    price: price,
+    payment: get("Payment"),
+    under18: /^y/i.test(get("Under 18")),
+    signed: /^signed/i.test(status),
+    signedBy: get("Signed by"),
+    signedOn: signedOn instanceof Date ? signedOn.getTime() : 0,
+    media: get("Photos and videos")
+  };
+}
+
+/** Saves a client's signature on their agreement row. Returns what to email you, or null. */
+function saveAgreement_(ss, client, ev) {
+  var sheet = ss.getSheetByName(AGREEMENTS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var c = agreementCols_(sheet);
+  if (!c.ID || !c.Client) return null;
+  var vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width).getValues();
+  var name = String(client.Name || "").trim().toLowerCase();
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][c.ID - 1]).trim() !== String(ev.key || "") || String(vals[i][c.Client - 1]).trim().toLowerCase() !== name) continue;
+    if (c.Status && /^signed/i.test(String(vals[i][c.Status - 1]))) return null; // already signed: keep the first signature
+    var row = i + 2;
+    var set = function (col, value) { if (c[col]) sheet.getRange(row, c[col]).setValue(value); };
+    var signedBy = clip_(ev.name, 200).trim();
+    set("Status", "Signed");
+    set("Signed by", cell_(signedBy));
+    set("Signed on", new Date());
+    set("Photos and videos", cell_(clip_(ev.media, 200)));
+    set("Parent or guardian", cell_(clip_(ev.parentName, 200)));
+    set("Relationship", cell_(clip_(ev.relationship, 200)));
+    set("Parent phone and email", cell_(clip_(ev.parentContact, 200)));
+    set("Emergency contact", cell_(clip_(ev.emergency, 200)));
+    if (c["Copy of agreement"]) sheet.getRange(row, c["Copy of agreement"]).setValue(cell_(clip_(ev.text, 40000))).setWrap(false);
+    return { name: client.Name || signedBy, signedBy: signedBy, media: clip_(ev.media, 200), text: clip_(ev.text, 40000) };
+  }
+  return null;
+}
+
+/** Emails you a copy when a client signs. */
+function notifyAgreement_(ss, signed) {
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (!to) return;
+    signed.forEach(function (s) {
+      MailApp.sendEmail(to, "ScoutCo: " + s.name + " signed their agreement",
+        s.name + " signed their ScoutCo agreement in the app.\n\nPhotos and videos: " + s.media +
+        "\n\nIt's saved on the Agreements tab:\n" + ss.getUrl() + "\n\n---------- What they agreed to ----------\n\n" + s.text);
+    });
+  } catch (err) { /* email is a bonus; the signature is already saved */ }
 }
