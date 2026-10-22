@@ -20,6 +20,7 @@
  *   Lift Club Community: posts, replies and reactions from every client and coach. Tick Hide to take one down
  *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
+ *   Renewals: a notice before each client's next block. Tick "Send to app" and they see it in their app
  *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
@@ -99,6 +100,7 @@ function doGet(e) {
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING), pushAppId: setting_(ss, PUSH_APP_SETTING) },
     videos: safely_(function () { return videosFor_(ss, code, isCoach_(client.Type)); }, []),
     agreement: isCoach_(client.Type) ? undefined : safely_(function () { return agreementFor_(ss, client); }, null),
+    renewal: isCoach_(client.Type) ? undefined : safely_(function () { return renewalFor_(ss, client); }, null),
     community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0), me: safely_(function () { return personId_(code, communitySalt_()); }, "") },
     updated: new Date().toISOString()
   });
@@ -450,6 +452,8 @@ function doPost(e) {
         if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
       } else if (ev.type === "agreement") {
         if (!isCoach_(client.Type)) { var ag = saveAgreement_(ss, client, ev); if (ag) signed.push(ag); }
+      } else if (ev.type === "renewal") {
+        if (!isCoach_(client.Type)) saveRenewalSeen_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
       } else if (ev.type === "videoreply" || ev.type === "videohide") {
@@ -2379,12 +2383,15 @@ function setupAgreements() {
   sheet.getRange(1, 9).setNote("Grey columns fill in by themselves when the client signs in the app.");
   sheet.setFrozenRows(1);
   sheet.setColumnWidth(1, 160).setColumnWidth(2, 170).setColumnWidth(4, 170).setColumnWidth(6, 200).setColumnWidth(17, 260);
+  setupRenewals_(ss);
   ss.setActiveSheet(sheet);
   SpreadsheetApp.getUi().alert("Done! To send a client their agreement:\n\n" +
     "1. Add a row on the Agreements tab: pick the client, the agreement type, start date, session day and time (face to face only), price per block, how they'll pay, and whether they're under 18.\n" +
     "2. Tick \"Send to app\".\n\n" +
     "Next time they open the app they'll see \"Your agreement is ready to sign\". When they sign, the grey columns fill in (including a full copy of what they agreed to) and you get an email.\n\n" +
-    "Clients only sign once. It carries over each time their block renews.");
+    "Clients only sign once. It carries over each time their block renews.\n\n" +
+    "Renewals: about 3 weeks before a client's block ends, add a row on the Renewals tab (client, next block start date, session time, price, payment) and tick \"Send to app\". " +
+    "They see \"Your next block is coming up\" with the details and the date to tell you if they want to stop, and tap Got it. Nothing to sign.");
 }
 
 /** The columns of the Agreements tab, found by heading so you can move them around. */
@@ -2477,4 +2484,92 @@ function notifyAgreement_(ss, signed) {
         "\n\nIt's saved on the Agreements tab:\n" + ss.getUrl() + "\n\n---------- What they agreed to ----------\n\n" + s.text);
     });
   } catch (err) { /* email is a bonus; the signature is already saved */ }
+}
+
+/* Renewal notices: you fill in a row before a client's next block and tick "Send to app".
+   They see "Your next block is coming up" in their app and tap "Got it". No signing needed. */
+
+var RENEWALS_TAB = "Renewals";
+var RENEWAL_HEADERS = ["Client", "Next block starts", "Session day and time", "Price per block", "Payment", "Send to app", "Status", "Seen on", "ID"];
+
+function setupRenewals_(ss) {
+  var sheet = ss.getSheetByName(RENEWALS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(RENEWALS_TAB);
+    sheet.getRange(1, 1, 1, RENEWAL_HEADERS.length).setValues([RENEWAL_HEADERS]);
+    styleHeader_(sheet, RENEWAL_HEADERS.length);
+  }
+  var n = sheet.getMaxRows() - 1;
+  var clients = ss.getSheetByName(CLIENTS_TAB);
+  if (clients) {
+    var nameCol = clients.getRange(1, 1, 1, clients.getLastColumn()).getValues()[0]
+      .map(function (h) { return String(h).trim().toLowerCase(); }).indexOf("name") + 1;
+    if (nameCol) sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInRange(clients.getRange(2, nameCol, clients.getMaxRows() - 1, 1), true).setAllowInvalid(true).build());
+  }
+  sheet.getRange(2, 2, n, 1).setNumberFormat("dd/mm/yyyy");
+  sheet.getRange(2, 5, n, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(AGREEMENT_PAYMENTS, true).setAllowInvalid(true).build());
+  sheet.getRange(2, 6, n, 1).insertCheckboxes();
+  sheet.getRange(2, 7, n, 3).setBackground("#f3f4f6");
+  sheet.getRange(2, 8, n, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  sheet.getRange(1, 7).setNote("Grey columns fill in by themselves when the client taps Got it in the app.");
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 160).setColumnWidth(3, 170).setColumnWidth(5, 200);
+  return sheet;
+}
+
+/** This client's renewal notice for a block that hasn't started yet, or null. */
+function renewalFor_(ss, client) {
+  var sheet = ss.getSheetByName(RENEWALS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var h = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var c = {}; RENEWAL_HEADERS.forEach(function (name) { c[name] = h.indexOf(name.toLowerCase()) + 1; });
+  if (!c.Client || !c["Send to app"] || !c.ID || !c["Next block starts"]) return null;
+  var name = String(client.Name || "").trim().toLowerCase();
+  if (!name) return null;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, h.length);
+  var vals = rows.getValues(), shown = rows.getDisplayValues();
+  var now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var tz = ss.getSpreadsheetTimeZone();
+  for (var i = vals.length - 1; i >= 0; i--) {
+    var v = vals[i], d = shown[i];
+    if (String(v[c.Client - 1]).trim().toLowerCase() !== name || v[c["Send to app"] - 1] !== true) continue;
+    var start = toDate_(v[c["Next block starts"] - 1]);
+    if (!start || start < today) continue; // that block has started, so the notice is done
+    var get = function (col) { return c[col] ? String(d[c[col] - 1] || "").trim() : ""; };
+    var id = String(v[c.ID - 1] || "").trim();
+    if (!id) { id = Utilities.getUuid().slice(0, 8); sheet.getRange(i + 2, c.ID).setValue(id); }
+    var status = get("Status");
+    if (!status && c.Status) sheet.getRange(i + 2, c.Status).setValue("Waiting");
+    var price = get("Price per block");
+    if (/^\d/.test(price)) price = "$" + price;
+    var replyBy = new Date(start.getFullYear(), start.getMonth(), start.getDate() - 15);
+    return {
+      id: id,
+      start: Utilities.formatDate(start, tz, "d MMMM yyyy"),
+      replyBy: Utilities.formatDate(replyBy, tz, "d MMMM yyyy"),
+      time: get("Session day and time"),
+      price: price,
+      payment: get("Payment"),
+      seen: /^got it/i.test(status)
+    };
+  }
+  return null;
+}
+
+/** The client tapped "Got it" on their renewal notice. */
+function saveRenewalSeen_(ss, client, ev) {
+  var sheet = ss.getSheetByName(RENEWALS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var h = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cId = h.indexOf("id") + 1, cName = h.indexOf("client") + 1, cStatus = h.indexOf("status") + 1, cSeen = h.indexOf("seen on") + 1;
+  if (!cId || !cName) return;
+  var vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, h.length).getValues();
+  var name = String(client.Name || "").trim().toLowerCase();
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][cId - 1]).trim() !== String(ev.key || "") || String(vals[i][cName - 1]).trim().toLowerCase() !== name) continue;
+    if (cStatus) sheet.getRange(i + 2, cStatus).setValue("Got it");
+    if (cSeen && !vals[i][cSeen - 1]) sheet.getRange(i + 2, cSeen).setValue(new Date());
+    return;
+  }
 }

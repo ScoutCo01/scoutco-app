@@ -19,6 +19,7 @@
   var KEY_VIDEOS_SEEN = "scoutco.videosSeen";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
   var KEY_AGREE = "scoutco.agreeSigned";
+  var KEY_RENEW = "scoutco.renewSeen";
 
   var COACH = String(CONFIG.coachName || "Kirst");
 
@@ -153,7 +154,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW);
     videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
@@ -171,7 +172,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -1960,6 +1961,7 @@
         '<section class="card">' + head +
           '<details class="ag-more"><summary>Read the full agreement</summary>' + terms + "</details>" +
           (media ? '<p class="small"><b>Photos and videos:</b> ' + esc(media) + "</p>" : "") +
+          (renewal() ? '<div class="book-call ag-renew">' + renewalHtml(renewal(), false) + "</div>" : "") +
           '<p class="muted small">You don\'t need to sign again when your block renews. To change your photo choice or anything else, just tell ' + esc(COACH) + ".</p>" +
         "</section>";
       return;
@@ -2045,6 +2047,35 @@
       '<button class="btn primary" data-goto-agreement>Read and sign</button>';
   }
 
+  // ---------- renewal notice ----------
+  // Before a client's next block, Kirst ticks a row on the Renewals tab and it shows here. Nothing to sign.
+  function renewal() { return !isCoach() && state.data && state.data.renewal && state.data.renewal.id ? state.data.renewal : null; }
+  function renewalSeen() {
+    var r = renewal(), s = load(KEY_RENEW, null);
+    return !!(r && (r.seen || (s && s.code === state.code && s.id === r.id)));
+  }
+  function renewalHtml(r, withButton) {
+    var rows = [["Session day and time", r.time], ["Price for the 12-week block", r.price], ["Payment", r.payment]]
+      .filter(function (x) { return String(x[1] || "").trim(); });
+    return "<div><strong>Your next block starts " + esc(r.start) + "</strong>" +
+      (rows.length ? '<dl class="ag-details">' + rows.map(function (x) { return "<dt>" + esc(x[0]) + "</dt><dd>" + esc(x[1]) + "</dd>"; }).join("") + "</dl>" : "") +
+      "<div>Everything else stays the same as your ScoutCo agreement. There's nothing you need to do to keep going. " +
+      "If you'd like to stop or change anything, let " + esc(COACH) + " know by " + esc(r.replyBy) + ".</div></div>" +
+      (withButton ? '<button class="btn primary" data-renew-ok>Got it</button>' : "");
+  }
+  function renderRenewNote() {
+    var el = $("renewNote"), r = renewal(), showIt = !!r && !renewalSeen();
+    el.classList.toggle("hidden", !showIt);
+    if (showIt) el.innerHTML = renewalHtml(r, true);
+  }
+  function renewalOk() {
+    var r = renewal();
+    if (!r) return;
+    queue({ type: "renewal", key: r.id });
+    save(KEY_RENEW, { code: state.code, id: r.id, at: Date.now() });
+    render();
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
@@ -2117,6 +2148,7 @@
     if (state.view === "agreement") renderAgreement();
     renderProfileNudge();
     renderAgreeNudge();
+    renderRenewNote();
 
     var note = $("coachNote");
     if (client.message) {
@@ -2507,6 +2539,9 @@
     if (e.target.closest("[data-prof-save]")) { saveProfile(); return; }
     if (e.target.closest("[data-prof-photo-del]") && window.confirm("Remove your photo?")) setPhoto("");
   });
+  $("renewNote").addEventListener("click", function (e) {
+    if (e.target.closest("[data-renew-ok]")) renewalOk();
+  });
   $("agreeNudge").addEventListener("click", function (e) {
     if (!e.target.closest("[data-goto-agreement]")) return;
     state.view = "agreement";
@@ -2753,6 +2788,7 @@
       return x;
     }
     return {
+      renewal: { id: "demo-r", start: "25 January 2027", replyBy: "10 January 2027", time: "", price: "$540", payment: "Fortnightly via Acuity", seen: false },
       agreement: { id: "demo", type: "Online", start: "2 November 2026", time: "", price: "$540", payment: "Fortnightly via Acuity", under18: false, signed: false },
       client: { name: "Demo Athlete", type: "Online only", sessions: "Train on your own schedule, 3 sessions a week", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {
