@@ -18,6 +18,7 @@
  *   Profiles: one row per client. Name and Type come from Clients; the client fills in photo, 1RMs, DOB, goals and so on in the app
  *   Coach profile: your own photo and bio (filled in from the Profile tab of your coach app). Clients see it in their app
  *   Lift Club Community: posts, replies and reactions from every client and coach. Tick Hide to take one down
+ *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
@@ -95,6 +96,7 @@ function doGet(e) {
     coach: isCoach_(client.Type) ? undefined : safely_(function () { return coachProfile_(ss); }, null),
     clients: isCoach_(client.Type) ? safely_(function () { return clientProfiles_(ss); }, []) : undefined,
     settings: { bookingUrl: setting_(ss, BOOKING_SETTING), pushAppId: setting_(ss, PUSH_APP_SETTING) },
+    videos: safely_(function () { return videosFor_(ss, code, isCoach_(client.Type)); }, []),
     community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0), me: safely_(function () { return personId_(code, communitySalt_()); }, "") },
     updated: new Date().toISOString()
   });
@@ -346,8 +348,14 @@ function doPost(e) {
   var client = findClient_(ss, normalise_(body.code));
   if (!client) return json_({ error: "That code wasn't recognised." });
 
+  // A piece of a video upload (big, so it skips the queue below).
+  if (body.video) {
+    try { return json_(handleVideo_(ss, client, body.video)); }
+    catch (err) { return json_({ error: "Something went wrong saving the video. Please try again.", retry: true, detail: String(err && err.message || err) }); }
+  }
+
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [], checkins = [], community = [], posted = [];
+  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [];
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -440,6 +448,9 @@ function doPost(e) {
         if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
+      } else if (ev.type === "videoreply" || ev.type === "videohide") {
+        var vr = saveVideoEvent_(ss, client, ev);
+        if (vr) replies.push(vr);
       } else if (ev.type === "post" || ev.type === "react" || ev.type === "unpost") {
         community.push(ev); // saved together below, in the order they were sent
       } else if (ev.type === "comment") {
@@ -461,6 +472,11 @@ function doPost(e) {
   if (checkins.length) notifyCheckin_(ss, client, checkins);
   if (posted.length) notifyCommunity_(ss, client, posted);
   if (posted.length) safely_(function () { pushCommunity_(ss, client, posted); }, null);
+  replies.forEach(function (r) {
+    safely_(function () {
+      sendPush_(ss, [personId_(r.to, communitySalt_())], "Kirst replied", "Kirst replied to your " + (r.lift ? r.lift.toLowerCase() + " " : "") + "form video. Tap to read it.", "videos");
+    }, null);
+  });
   return json_({ ok: true, saved: done });
 }
 
@@ -643,6 +659,7 @@ function onOpen() {
     .addItem("Set up Lift Club Community", "setupCommunity")
     .addItem("Set up push notifications", "setupPush")
     .addItem("Send me a test notification", "testPush")
+    .addItem("Set up videos", "setupVideos")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -1687,14 +1704,14 @@ function saveCoachProfile_(ss, client, ev) {
 
 /** Every active client's profile (and latest PBs) for your coach app, in the Clients tab's order. */
 function clientProfiles_(ss) {
-  var out = [], byCode = {}, profiles = profilesByCode_(ss);
+  var out = [], byCode = {}, profiles = profilesByCode_(ss), salt = safely_(communitySalt_, "");
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
     var code = normalise_(c.Code);
     if (!code || isOff_(c.Active) || isCoach_(c.Type)) return;
     var p = profiles[code] || {};
     var row = { name: String(c.Name || ""), type: String(c.Type || ""), photo: p.photo || "", dob: p.dob || "",
       squat: p.squat || "", deadlift: p.deadlift || "", bench: p.bench || "", goals: p.goals || "", hobbies: p.hobbies || "", food: p.food || "",
-      at: p.at || (p.dob || p.goals || p.photo ? 1 : 0), pbs: [] };
+      at: p.at || (p.dob || p.goals || p.photo ? 1 : 0), pbs: [], vid: salt ? personId_(code, salt) : "" };
     byCode[code] = row;
     out.push(row);
   });
@@ -1917,8 +1934,8 @@ var PUSH_APP_SETTING = "OneSignal App ID";
 var PUSH_KEY_SETTING = "OneSignal API key";
 var APP_URL = "https://scoutco01.github.io/scoutco-app/";
 
-/** Sends a notification through OneSignal to these people (personId_ values). Returns OneSignal's reply. */
-function sendPush_(ss, ids, title, message) {
+/** Sends a notification through OneSignal to these people (personId_ values). Tapping it opens that tab of the app. Returns OneSignal's reply. */
+function sendPush_(ss, ids, title, message, view) {
   var appId = setting_(ss, PUSH_APP_SETTING), key = setting_(ss, PUSH_KEY_SETTING);
   if (!appId || !key || !ids.length) return null;
   var res = UrlFetchApp.fetch("https://api.onesignal.com/notifications?c=push", {
@@ -1927,7 +1944,7 @@ function sendPush_(ss, ids, title, message) {
     headers: { Authorization: (/^(Key|Basic) /.test(key) ? "" : "Key ") + key },
     payload: JSON.stringify({
       app_id: appId, target_channel: "push", include_aliases: { external_id: ids },
-      headings: { en: title }, contents: { en: clip_(message, 180) }, url: APP_URL + "?view=community"
+      headings: { en: title }, contents: { en: clip_(message, 180) }, url: APP_URL + "?view=" + (view || "community")
     }),
     muteHttpExceptions: true
   });
@@ -1978,4 +1995,276 @@ function testPush() {
   }
   ui.alert(ok ? "Sent! It should pop up on your phone in a few seconds.\n\nNothing showing? Check you tapped Turn on notifications in the Lift Club Community tab of your app, on that phone."
     : "OneSignal didn't send it. Check the App ID and API key on the Settings tab.\n\nWhat OneSignal said: " + (r ? r.code + " " + clip_(r.body, 300) : "no reply"));
+}
+
+/* ------------------------------------------------------------------ */
+/* Videos. You send a client a video from their session, and clients  */
+/* send you form videos of their back squat, deadlift and bench press. */
+/* The files go into a "ScoutCo videos" folder in your Google Drive.   */
+/* ------------------------------------------------------------------ */
+
+var VIDEOS_TAB = "Videos";
+var VIDEO_HEADERS = ["Uploaded", "Client", "Type", "Lift", "Note", "Reply from Kirst", "Hide", "Video", "File ID", "ID", "Code", "Replied"];
+// [column, 1-based]. The tab is created with these, in this order.
+var VC = { at: 1, client: 2, type: 3, lift: 4, note: 5, reply: 6, hide: 7, link: 8, file: 9, id: 10, code: 11, replied: 12 };
+var VIDEO_FROM_COACH = "From Kirst";
+var VIDEO_FORM = "Form check";
+var VIDEO_LIFTS = ["Back squat", "Deadlift", "Bench press"];
+var VIDEO_FOLDER = "ScoutCo videos";
+var VIDEO_CHUNK = 8 * 1024 * 1024;        // the app sends videos in 8 MB pieces (Drive needs multiples of 256 KB)
+var VIDEO_MAX = 500 * 1024 * 1024;        // biggest video the app accepts
+var VIDEO_SHOW = 150;                     // newest videos sent to your coach app
+
+/** The Videos tab, created the first time it's needed. */
+function videosTab_(ss) {
+  var sheet = ss.getSheetByName(VIDEOS_TAB);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(VIDEOS_TAB);
+  sheet.appendRow(VIDEO_HEADERS);
+  styleHeader_(sheet, VIDEO_HEADERS.length);
+  sheet.setColumnWidth(VC.at, 130);
+  sheet.setColumnWidth(VC.client, 140);
+  sheet.setColumnWidth(VC.type, 100);
+  sheet.setColumnWidth(VC.lift, 110);
+  sheet.setColumnWidth(VC.note, 260);
+  sheet.setColumnWidth(VC.reply, 300);
+  sheet.setColumnWidth(VC.hide, 60);
+  sheet.setColumnWidth(VC.link, 260);
+  sheet.getRange(2, VC.at, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  sheet.getRange(2, VC.note, sheet.getMaxRows() - 1, 2).setWrap(true);
+  sheet.getRange(1, VC.reply).setNote("Type a reply to a client's form video here and it shows under the video in their app (or reply from the Videos tab of your coach app).");
+  sheet.getRange(1, VC.hide).setBackground("#fecaca").setNote("Tick to take a video out of the app. The file stays in your Drive.");
+  sheet.hideColumns(VC.file, 4); // File ID, ID, Code, Replied: the app needs these, you don't
+  return sheet;
+}
+
+/** The "ScoutCo videos" folder in your Drive (made the first time). Only you can open it. */
+function videoFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("videoFolder");
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(VIDEO_FOLDER);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(VIDEO_FOLDER);
+  props.setProperty("videoFolder", folder.getId());
+  return folder;
+}
+
+function videoLift_(s) {
+  s = String(s || "").trim().toLowerCase();
+  for (var i = 0; i < VIDEO_LIFTS.length; i++) if (VIDEO_LIFTS[i].toLowerCase() === s) return VIDEO_LIFTS[i];
+  return "";
+}
+
+/** Active, non-coach client whose community id matches (the coach app picks clients by this id, never by code). */
+function clientByPersonId_(ss, pid) {
+  var salt = communitySalt_(), list = readTab_(ss, CLIENTS_TAB);
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    if (normalise_(c.Code) && !isOff_(c.Active) && !isCoach_(c.Type) && personId_(c.Code, salt) === String(pid || "")) return c;
+  }
+  return null;
+}
+
+/**
+ * Uploads come in pieces, because a phone video is far bigger than one message can carry.
+ *   start:  the app says what's coming; Drive gives us an upload address, kept here for 6 hours
+ *   chunk:  one piece of the video, passed straight on to Drive
+ *   status: after a dropped connection, how much Drive already has, so the app can carry on
+ */
+function handleVideo_(ss, client, v) {
+  if (!v || typeof v !== "object") return { error: "Bad request" };
+  var cache = CacheService.getScriptCache();
+  var me = normalise_(client.Code);
+
+  if (v.op === "start") {
+    var size = Math.floor(Number(v.size) || 0);
+    if (size <= 0) return { error: "That video looks empty." };
+    if (size > VIDEO_MAX) return { error: "That video is too big. Trim it to under " + Math.round(VIDEO_MAX / 1048576) + " MB and try again." };
+    var mime = /^video\/[a-z0-9.+-]+$/i.test(String(v.mime || "")) ? String(v.mime) : "video/mp4";
+    var job = { code: me, size: size, mime: mime, note: clip_(v.note, 1000).trim() };
+    if (isCoach_(client.Type)) {
+      var to = clientByPersonId_(ss, v.to);
+      if (!to) return { error: "Pick a client to send it to." };
+      job.kind = VIDEO_FROM_COACH; job.to = normalise_(to.Code); job.toName = String(to.Name || to.Code);
+      job.lift = clip_(v.lift, 60).trim();
+    } else {
+      job.kind = VIDEO_FORM; job.to = me; job.toName = String(client.Name || client.Code);
+      job.lift = videoLift_(v.lift);
+      if (!job.lift) return { error: "Form videos are for back squat, deadlift and bench press." };
+    }
+    var ext = (/\.([a-z0-9]{2,4})$/i.exec(String(v.name || "")) || [, mime.split("/")[1] === "quicktime" ? "mov" : "mp4"])[1].toLowerCase();
+    var stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "yyyy-MM-dd HHmm");
+    var fileName = [job.toName, stamp, job.kind === VIDEO_FORM ? job.lift + " form check" : (job.lift || "session")].join(" - ") + "." + ext;
+    var res = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id", {
+      method: "post",
+      contentType: "application/json; charset=UTF-8",
+      headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken(), "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(size) },
+      payload: JSON.stringify({ name: fileName, mimeType: mime, parents: [videoFolder_().getId()] }),
+      muteHttpExceptions: true
+    });
+    var url = header_(res, "Location");
+    if (res.getResponseCode() !== 200 || !url) return { error: "Google Drive didn't take the video (" + res.getResponseCode() + "). Try again soon." };
+    job.url = String(url);
+    var upload = Utilities.getUuid();
+    cache.put("video:" + upload, JSON.stringify(job), 21600);
+    return { ok: true, upload: upload, chunk: VIDEO_CHUNK };
+  }
+
+  var raw = cache.get("video:" + String(v.upload || ""));
+  if (!raw) return { error: "That upload timed out. Please try again.", restart: true };
+  var j = JSON.parse(raw);
+  if (j.code !== me) return { error: "Bad request" };
+
+  if (v.op === "status") {
+    var st = UrlFetchApp.fetch(j.url, { method: "put", headers: { "Content-Range": "bytes */" + j.size }, payload: "", muteHttpExceptions: true, followRedirects: false });
+    return videoProgress_(ss, j, st, v.upload);
+  }
+
+  if (v.op === "chunk") {
+    var start = Math.floor(Number(v.start) || 0);
+    var bytes = Utilities.base64Decode(String(v.data || ""));
+    var end = start + bytes.length - 1;
+    var last = end + 1 === j.size;
+    if (start < 0 || !bytes.length || end >= j.size || (!last && bytes.length % (256 * 1024) !== 0)) return { error: "Bad request" };
+    var put = UrlFetchApp.fetch(j.url, {
+      method: "put",
+      contentType: j.mime,
+      headers: { "Content-Range": "bytes " + start + "-" + end + "/" + j.size },
+      payload: bytes,
+      muteHttpExceptions: true,
+      followRedirects: false
+    });
+    return videoProgress_(ss, j, put, v.upload);
+  }
+  return { error: "Bad request" };
+}
+
+/** A reply header, whatever case the server wrote its name in. */
+function header_(res, name) {
+  var h = res.getAllHeaders(), want = name.toLowerCase();
+  for (var k in h) if (k.toLowerCase() === want) return String(Array.isArray(h[k]) ? h[k][0] : h[k]);
+  return "";
+}
+
+/** Reads Drive's answer: 308 means "send the next piece", 200/201 means the video is all there. */
+function videoProgress_(ss, j, res, upload) {
+  var code = res.getResponseCode();
+  if (code === 308) {
+    var range = header_(res, "Range");
+    var m = /-(\d+)\s*$/.exec(range);
+    return { ok: true, next: m ? Number(m[1]) + 1 : 0 };
+  }
+  if (code === 200 || code === 201) {
+    var fileId = "";
+    try { fileId = JSON.parse(res.getContentText()).id || ""; } catch (err) { /* handled below */ }
+    if (!fileId) return { error: "Drive saved it but didn't say where. Check the ScoutCo videos folder." };
+    CacheService.getScriptCache().remove("video:" + upload);
+    return { ok: true, done: true, video: finishVideo_(ss, j, fileId) };
+  }
+  if (code === 404 || code === 410) return { error: "That upload timed out. Please try again.", restart: true };
+  return { error: "Google Drive had a hiccup (" + code + ").", retry: true };
+}
+
+/** The video is in Drive: let the app play it, add it to the Videos tab, and let the right person know. */
+function finishVideo_(ss, j, fileId) {
+  var link = "https://drive.google.com/file/d/" + fileId + "/view";
+  var shared = true;
+  try {
+    var file = DriveApp.getFileById(fileId);
+    // "Anyone with the link can view" is what lets the app play it without a Google sign-in.
+    // The link is long and random, and only this client's app (and yours) is ever given it.
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    file.setDescription(j.kind + " for " + j.toName + (j.lift ? " (" + j.lift + ")" : "") + (j.note ? ": " + j.note : ""));
+  } catch (err) { shared = false; }
+  var id = "v" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var sheet = videosTab_(ss);
+    sheet.appendRow([new Date(), cell_(j.toName), j.kind, cell_(j.lift), cell_(j.note), "", false, link, fileId, id, j.to, ""]);
+    sheet.getRange(sheet.getLastRow(), VC.hide).insertCheckboxes();
+  } finally {
+    lock.releaseLock();
+  }
+  var who = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) === j.to; })[0] || { Name: j.toName, Code: j.to };
+  if (j.kind === VIDEO_FORM) {
+    try {
+      var to = Session.getEffectiveUser().getEmail();
+      if (to) MailApp.sendEmail(to, "ScoutCo: " + j.lift.toLowerCase() + " form video from " + j.toName,
+        (j.note ? j.toName + " says: " + j.note + "\n\n" : "") + "Watch it: " + link +
+        "\n\nReply from the Videos tab of your coach app, or type it in the Reply from Kirst column on the Videos tab:\n" + ss.getUrl());
+    } catch (err) { /* email is a bonus */ }
+    safely_(function () {
+      var salt = communitySalt_();
+      var coaches = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) && isCoach_(c.Type) && !isOff_(c.Active); })
+        .map(function (c) { return personId_(c.Code, salt); });
+      sendPush_(ss, coaches, "New form video", communityName_(who) + " sent a " + j.lift.toLowerCase() + " video for you to check", "videos");
+    }, null);
+  } else {
+    safely_(function () {
+      sendPush_(ss, [personId_(j.to, communitySalt_())], "New video from Kirst", "Kirst sent you a video" + (j.lift ? " of your " + j.lift.toLowerCase() : " from your session") + ". Tap to watch.", "videos");
+    }, null);
+  }
+  return { id: id, at: Date.now(), kind: j.kind === VIDEO_FORM ? "form" : "coach", lift: j.lift, note: j.note, reply: "", file: fileId, shared: shared,
+    client: j.toName, who: personId_(j.to, communitySalt_()) };
+}
+
+/** Videos for the app: a client gets their own, the coach gets everyone's (newest first). */
+function videosFor_(ss, code, coach) {
+  var sheet = ss.getSheetByName(VIDEOS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, VIDEO_HEADERS.length).getValues();
+  var salt = coach ? communitySalt_() : "", ids = {};
+  var out = [];
+  rows.forEach(function (r) {
+    var rc = normalise_(r[VC.code - 1]), file = text_(r[VC.file - 1]);
+    if (!file || !rc || isTicked_(r[VC.hide - 1])) return;
+    if (!coach && rc !== code) return;
+    var v = { id: text_(r[VC.id - 1]), at: r[VC.at - 1] instanceof Date ? r[VC.at - 1].getTime() : 0,
+      kind: text_(r[VC.type - 1]) === VIDEO_FORM ? "form" : "coach", lift: text_(r[VC.lift - 1]), note: text_(r[VC.note - 1]),
+      reply: text_(r[VC.reply - 1]), file: file };
+    if (coach) { v.client = text_(r[VC.client - 1]); v.who = ids[rc] || (ids[rc] = personId_(rc, salt)); }
+    out.push(v);
+  });
+  out.sort(function (a, b) { return b.at - a.at; });
+  return coach ? out.slice(0, VIDEO_SHOW) : out;
+}
+
+/** From the app: your reply to a form video, or taking a video down. */
+function saveVideoEvent_(ss, client, ev) {
+  var sheet = ss.getSheetByName(VIDEOS_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return;
+  var ids = sheet.getRange(2, VC.id, sheet.getLastRow() - 1, 1).getValues().map(function (r) { return String(r[0]); });
+  var at = ids.indexOf(String(ev.video || ""));
+  if (at === -1) return;
+  var row = at + 2, coach = isCoach_(client.Type);
+  var rowCode = normalise_(sheet.getRange(row, VC.code).getValue());
+  if (ev.type === "videoreply") {
+    if (!coach) return;
+    var text = clip_(ev.text, 2000).trim();
+    sheet.getRange(row, VC.reply).setValue(cell_(text));
+    sheet.getRange(row, VC.replied).setValue(new Date());
+    if (text) return { to: rowCode, lift: text_(sheet.getRange(row, VC.lift).getValue()) };
+  } else if (ev.type === "videohide") {
+    if (!coach && rowCode !== normalise_(client.Code)) return; // clients can only take down their own
+    sheet.getRange(row, VC.hide).setValue(true);
+    try { DriveApp.getFileById(text_(sheet.getRange(row, VC.file).getValue())).setTrashed(true); } catch (err) { /* already gone */ }
+  }
+}
+
+/** ScoutCo menu: makes the Videos tab and the Drive folder (and asks Google for permission to use your Drive). */
+function setupVideos() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = videosTab_(ss);
+  var folder = videoFolder_();
+  communitySalt_();
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Done! Videos are ready.\n\n" +
+    "Send a client a video: open your coach app, go to the Videos tab, pick the client and choose a video.\n\n" +
+    "Form checks: on back squat, deadlift and bench press, clients now have a \"Send Kirst a form video\" button. " +
+    "You get an email, and the video shows on the Videos tab of your coach app where you can watch it and reply.\n\n" +
+    "Every video is saved in the \"" + folder.getName() + "\" folder in your Google Drive and listed on this Videos tab. " +
+    "Tick Hide to take one out of the app.");
 }

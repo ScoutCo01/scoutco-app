@@ -477,3 +477,31 @@ button.comm-avatar { cursor: pointer; }
 .push-pop-card p { margin: 0 0 16px; }
 .push-pop-card .btn { display: block; width: 100%; margin-top: 8px; }
 .push-pop-bell { font-size: 40px; }
+
+/* Videos */
+.ex-formvid { margin-top: 8px; }
+.vid-select { width: 100%; }
+.vid-send .ci-label:first-of-type { margin-top: 12px; }
+.vid-section { margin: 22px 2px 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.vid-card.to-review { border-color: var(--accent); }
+.vid-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.vid-head b { display: block; font-size: 15px; }
+.vid-head small { display: block; font-size: 12px; }
+.vid-thumb, .vid-frame { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; overflow: hidden; background: #000; border: 0; padding: 0; }
+.vid-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vid-play { position: absolute; inset: 0; margin: auto; width: 60px; height: 60px; border-radius: 50%; background: rgba(139, 92, 246, .9); color: #fff; display: flex; align-items: center; justify-content: center; }
+.vid-play svg { margin-left: 3px; }
+.vid-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.vid-help { margin: 6px 0 0; }
+.vid-note { margin-top: 10px; }
+.vid-reply { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border-left: 3px solid var(--accent); }
+.vid-reply .comm-text { margin-top: 4px; }
+.vid-wait { margin: 10px 0 0; }
+.upload-bar {
+  position: fixed; left: 12px; right: 12px; bottom: calc(12px + var(--safe-bottom)); z-index: 60; max-width: 520px; margin: 0 auto;
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--radius); padding: 12px 14px; box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.upload-bar.failed { border-color: var(--danger); }
+.upload-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.upload-track { height: 6px; border-radius: 3px; background: var(--surface-2); margin: 8px 0 6px; overflow: hidden; }
+.upload-track i { display: block; height: 100%; background: var(--accent); transition: width .3s; }

@@ -206,3 +206,17 @@ Every client and coach has a **Lift Club Community** tab in their app. They can 
 People can get a phone notification when someone posts in the Lift Club (everyone except the person who posted) or replies to a post they're in. Each person turns them on or off with the 🔔 Notifications card on their Lift Club Community or Profile tab. The yellow dot on the tab shows either way. On iPhone, notifications only work once the app is added to the home screen and opened from there.
 
 Setup: make a free OneSignal account and a Web app for `https://scoutco01.github.io` (Custom Code setup). Then ScoutCo menu → **Set up push notifications**, paste the **OneSignal App ID** and **OneSignal API key** on the Settings tab, and use **Send me a test notification** to check. The API key stays in your sheet. The app only gets the App ID.
+
+## Videos
+
+**Send a client a video from their session.** In your coach app, open the **Videos** tab, pick the client, add a note if you like, tap **Choose video and send** and pick a video from your phone. It shows on that client's **My videos** tab (nobody else's), and they get a notification if they've turned notifications on.
+
+**Form checks from clients.** On back squat, deadlift and bench press, clients have a **🎥 Send Kirst a form video** button (and they can also send one from their My videos tab). You get an email and a notification, and the video shows at the top of your Videos tab under **Form checks to look at** with a number on the tab. Tap **Reply** to send them your feedback; it shows under the video in their app and they get a notification.
+
+- Turn it on: ScoutCo menu → **Set up videos**. Google asks for permission to use your Drive the first time; say yes.
+- Every video is saved in a **ScoutCo videos** folder in your Google Drive and listed on the **Videos** tab of the sheet. You can also type a reply in the **Reply from Kirst** column.
+- Tick **Hide** on the Videos tab, or tap **Remove** in the app, to take a video out of the app (Remove also moves the file to your Drive bin).
+- The video files are set to "anyone with the link can view" so the app can play them without a Google sign-in. The link is long and random and only goes to that client's app and yours.
+- Keep the app open with the screen on while a video sends. Videos up to 500 MB work; a minute of 1080p phone video is about 100 MB. If the connection drops, the app picks up where it left off.
+- A video can take a few minutes after sending before Google lets it play.
+- Your free Google Drive has 15 GB, which holds a few hundred short clips. Delete old ones from the ScoutCo videos folder when it gets full.

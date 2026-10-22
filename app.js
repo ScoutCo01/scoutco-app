@@ -16,6 +16,7 @@
   var KEY_PROFILE = "scoutco.profile";
   var KEY_COMMUNITY = "scoutco.community";
   var KEY_PUSH_ASKED = "scoutco.pushAsked";
+  var KEY_VIDEOS_SEEN = "scoutco.videosSeen";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
 
   var COACH = String(CONFIG.coachName || "Kirst");
@@ -24,7 +25,8 @@
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
       view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
-      commDraft: "", commReply: null, commReplyDraft: "", commMsg: "", commErr: "" };
+      commDraft: "", commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
+      upload: null, playing: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "" };
   }
   var state = freshState();
 
@@ -150,7 +152,8 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN);
+    videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
     $("loginError").textContent = message || "";
@@ -167,7 +170,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -487,11 +490,12 @@
 
   function viewList() {
     var v;
-    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["community", "Lift Club Community"], ["profile", "Profile"]];
+    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"]];
     else {
       v = [["program", "Program"]];
       if (isOnline()) v.push(["checkin", "Check-in"]);
       v.push(["progress", "Progress"]);
+      v.push(["videos", "My videos"]);
       v.push(["community", "Lift Club Community"]);
       v.push(["profile", "Profile"]);
     }
@@ -505,11 +509,14 @@
     var profDue = profileNeedsFilling();
     var commDot = state.view !== "community" && commUnread();
     var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
+    var vidDot = state.view !== "videos" && videosUnseen() > 0;
+    var toReview = videosToReview();
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) ? '<span class="dot" aria-label="to do"></span>' : "") +
-        (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") + "</button>";
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) ? '<span class="dot" aria-label="to do"></span>' : "") +
+        (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") +
+        (v[0] === "videos" && toReview ? '<span class="count" aria-label="' + toReview + ' to check">' + toReview + "</span>" : "") + "</button>";
     }).join("");
     $("programPane").classList.toggle("hidden", state.view !== "program");
     $("checkinPane").classList.toggle("hidden", state.view !== "checkin");
@@ -519,6 +526,7 @@
     $("profilePane").classList.toggle("hidden", state.view !== "profile");
     $("clientsPane").classList.toggle("hidden", state.view !== "clients");
     $("communityPane").classList.toggle("hidden", state.view !== "community");
+    $("videosPane").classList.toggle("hidden", state.view !== "videos");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -1325,6 +1333,265 @@
   }
 
 
+  // ---------- videos ----------
+  // Kirst sends clients videos from their sessions; clients send her form videos of the big three lifts.
+  // Videos are too big for the outbox, so they upload straight away in pieces (the app has to stay open).
+  // Replies and removals are small, so they go through the outbox like everything else.
+  var VIDEO_LIFTS = ["Back squat", "Deadlift", "Bench press"];
+  var VIDEO_MAX_MB = 500;
+  var videoJustSent = []; // uploaded, but not in a fresh copy of the program yet
+  var videoDone = { hide: {}, reply: {} }; // removed or replied to on this phone (kept until the sheet shows it too)
+  function videoSeenStore() { var s = load(KEY_VIDEOS_SEEN, null); return s && s.code === state.code ? s : { code: state.code, seen: {} }; }
+  function safeFileId(id) { id = String(id || ""); return /^[A-Za-z0-9_-]{10,}$/.test(id) ? id : ""; }
+  function videoList() {
+    var server = (state.data && state.data.videos) || [];
+    var have = {};
+    server.forEach(function (v) { have[v.id] = 1; });
+    var list = videoJustSent.filter(function (v) { return !have[v.id]; }).concat(server);
+    var hidden = Object.assign({}, videoDone.hide), replies = {};
+    Object.keys(videoDone.reply).forEach(function (id) {
+      var srv = server.filter(function (v) { return v.id === id; })[0];
+      if (srv && srv.reply === videoDone.reply[id]) delete videoDone.reply[id]; else replies[id] = videoDone.reply[id];
+    });
+    load(KEY_OUTBOX, []).forEach(function (x) {
+      if (x.type === "videohide") hidden[x.video] = 1;
+      if (x.type === "videoreply") replies[x.video] = x.text;
+    });
+    return list.filter(function (v) { return !hidden[v.id] && safeFileId(v.file); }).map(function (v) {
+      return replies[v.id] != null ? Object.assign({}, v, { reply: replies[v.id], replyPending: load(KEY_OUTBOX, []).some(function (x) { return x.type === "videoreply" && x.video === v.id; }) }) : v;
+    }).sort(function (a, b) { return b.at - a.at; });
+  }
+  // A client sees a dot for a new video from Kirst, or a new reply from her.
+  function videoMark(v) { return v.kind === "coach" ? "1" : v.reply ? "r" + v.reply.length : ""; }
+  function videosUnseen() {
+    if (isCoach()) return 0;
+    var seen = videoSeenStore().seen;
+    return videoList().filter(function (v) { var m = videoMark(v); return m && seen[v.id] !== m; }).length;
+  }
+  function markVideosSeen() {
+    if (isCoach()) return;
+    var s = videoSeenStore(), changed = false;
+    videoList().forEach(function (v) { var m = videoMark(v); if (m && s.seen[v.id] !== m) { s.seen[v.id] = m; changed = true; } });
+    if (changed) save(KEY_VIDEOS_SEEN, s);
+  }
+  // Kirst's coach app: form videos she hasn't replied to yet.
+  function videosToReview() { return isCoach() ? videoList().filter(function (v) { return v.kind === "form" && !v.reply; }).length : 0; }
+
+  function mb(bytes) { return bytes >= 1048576 ? Math.round(bytes / 1048576) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB"; }
+  function videoPost(video) {
+    return fetch(CONFIG.apiUrl, { method: "POST", body: JSON.stringify({ code: state.code, video: video }) })
+      .then(function (r) { if (!r.ok) throw Object.assign(new Error("bad"), { retry: true }); return r.json(); },
+        function () { throw Object.assign(new Error("offline"), { retry: true }); });
+  }
+  function readBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { var s = String(r.result || ""); resolve(s.slice(s.indexOf(",") + 1)); };
+      r.onerror = function () { reject(new Error("Couldn't read the video on this phone.")); };
+      r.readAsDataURL(blob);
+    });
+  }
+  function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+
+  function uploadBar() {
+    var u = state.upload, el = $("uploadBar");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "uploadBar";
+      el.className = "upload-bar";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      el.addEventListener("click", function (e) { if (e.target.closest("[data-upload-close]")) { state.upload = null; uploadBar(); } });
+      document.body.appendChild(el);
+    }
+    if (!u) { el.classList.add("hidden"); return; }
+    el.classList.remove("hidden");
+    el.classList.toggle("failed", !!u.error);
+    el.innerHTML = '<div class="upload-row"><strong>' + esc(u.error ? "Video not sent" : u.done ? "Sent ✓" : "Sending video… " + u.pct + "%") + "</strong>" +
+      (u.busy ? "" : '<button class="comm-link" data-upload-close>Close</button>') + "</div>" +
+      (u.busy ? '<div class="upload-track"><i style="width:' + u.pct + '%"></i></div>' : "") +
+      '<div class="muted small">' + esc(u.error || u.msg || "") + "</div>";
+  }
+
+  // meta: { to (client id, coach only), toName, lift, note }
+  function uploadVideo(file, meta) {
+    if (state.upload && state.upload.busy) { window.alert("One video is already sending. Wait for it to finish first."); return; }
+    if (!canSend()) { window.alert("Videos can be sent once you open the app with your own code."); return; }
+    if (!file || !file.size) return;
+    if (file.size > VIDEO_MAX_MB * 1048576) {
+      window.alert("That video is " + mb(file.size) + ", which is too big (the limit is " + VIDEO_MAX_MB + " MB). Trim it on your phone first and try again.");
+      return;
+    }
+    var size = file.size, mime = /^video\//.test(file.type) ? file.type : "video/mp4";
+    state.upload = { busy: true, pct: 0, msg: mb(size) + ". Keep the app open and your screen on until it's done." };
+    uploadBar();
+    var lock = null;
+    try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(function (l) { lock = l; }, function () {}); } catch (e) { /* not on every phone */ }
+    var upload, chunk;
+    function progress(next) {
+      state.upload.pct = Math.min(99, Math.round(next / size * 100));
+      uploadBar();
+    }
+    function sendFrom(offset, tries) {
+      return readBase64(file.slice(offset, Math.min(size, offset + chunk)))
+        .then(function (data) { return videoPost({ op: "chunk", upload: upload, start: offset, data: data }); })
+        .then(function (res) {
+          if (res && res.done) return res.video;
+          if (res && res.ok) { progress(res.next); return sendFrom(res.next, 0); }
+          throw Object.assign(new Error((res && res.error) || "Something went wrong."), { retry: !!(res && res.retry) });
+        })
+        .catch(function (err) {
+          if (!err.retry || tries >= 5) throw err;
+          state.upload.msg = "Connection dropped. Trying again…"; uploadBar();
+          return wait(2000 * Math.pow(2, tries)).then(function () {
+            return videoPost({ op: "status", upload: upload });
+          }).then(function (res) {
+            if (res && res.done) return res.video;
+            if (res && res.ok) { state.upload.msg = "Back on track. Keep the app open."; progress(res.next); return sendFrom(res.next, tries + 1); }
+            throw new Error((res && res.error) || "Something went wrong.");
+          }, function () { return sendFrom(offset, tries + 1); });
+        });
+    }
+    videoPost({ op: "start", name: file.name || "", size: size, mime: mime, to: meta.to || "", lift: meta.lift || "", note: meta.note || "" })
+      .then(function (res) {
+        if (!res || !res.ok) throw new Error((res && res.error) || "Something went wrong.");
+        upload = res.upload; chunk = res.chunk || 8 * 1048576;
+        return sendFrom(0, 0);
+      })
+      .then(function (video) {
+        if (video && !video.client) video.client = meta.toName || "";
+        if (video) videoJustSent.push(video);
+        state.upload = { done: true, pct: 100, msg: isCoach() ? (meta.toName ? meta.toName.split(" ")[0] + " can watch it on their My videos tab now." : "Sent.") :
+          COACH + " will take a look and reply here." };
+        state.vidNote = ""; state.vidLift = state.vidLift || "";
+        if (state.data) render();
+        uploadBar();
+        setTimeout(function () { if (state.upload && state.upload.done) { state.upload = null; uploadBar(); } }, 6000);
+      })
+      .catch(function (err) {
+        state.upload = { error: (err && err.retry ? "Couldn't reach the sheet. Check your signal and try again." : (err && err.message) || "Something went wrong. Please try again.") };
+        uploadBar();
+      })
+      .then(function () { try { if (lock) lock.release(); } catch (e) { /* ignore */ } });
+  }
+  window.addEventListener("beforeunload", function (e) {
+    if (state.upload && state.upload.busy) { e.preventDefault(); e.returnValue = ""; }
+  });
+  // Opens the phone's video picker (library or camera), then calls back with the file.
+  function pickVideo(then) {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.accept = "video/*";
+    input.style.display = "none";
+    input.addEventListener("change", function () { var f = input.files && input.files[0]; input.remove(); if (f) then(f); });
+    document.body.appendChild(input);
+    input.click();
+  }
+
+  function videoPlayerHtml(v) {
+    var id = safeFileId(v.file);
+    if (state.playing === v.id) {
+      return '<div class="vid-frame" data-vid-frame="' + esc(v.id) + '"><iframe src="https://drive.google.com/file/d/' + esc(id) + '/preview" allow="autoplay; fullscreen" allowfullscreen title="Video"></iframe></div>' +
+        '<p class="muted small vid-help">Just sent? Google can take a few minutes to get a video ready to play. ' +
+        '<a href="https://drive.google.com/file/d/' + esc(id) + '/view" target="_blank" rel="noopener">Open in Google Drive</a></p>';
+    }
+    return '<button class="vid-thumb" data-vid-play="' + esc(v.id) + '" aria-label="Play video">' +
+      '<img src="https://drive.google.com/thumbnail?id=' + esc(id) + '&amp;sz=w640" alt="" loading="lazy" onerror="this.remove()">' +
+      '<span class="vid-play" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></button>';
+  }
+  function videoDate(ms) { return ms ? new Date(ms).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" }) : ""; }
+  function videoCardHtml(v) {
+    var coach = isCoach();
+    var title = v.kind === "form" ? (coach ? "Form check" : "Your form check") + (v.lift ? " · " + v.lift : "")
+      : (coach ? "Sent by you" : "From " + COACH) + (v.lift ? " · " + v.lift : "");
+    var reply = "";
+    if (v.kind === "form") {
+      if (coach && state.vidReplyOpen === v.id) {
+        reply = '<div class="comm-reply-box"><textarea data-vid-reply-text="' + esc(v.id) + '" rows="3" maxlength="2000" placeholder="What did you see? Cues for next time…">' +
+          esc(state.vidReplyDraft) + '</textarea><button class="btn primary small" data-vid-send-reply="' + esc(v.id) + '">Send reply</button></div>';
+      } else if (v.reply) {
+        var cPhoto = coach ? "" : safePhoto(coachInfo().photo);
+        reply = '<div class="vid-reply">' + (cPhoto ? '<span class="mini-avatar"><img src="' + esc(cPhoto) + '" alt=""></span>' : "") +
+          "<div><strong>" + (coach ? "Your reply" : esc(COACH) + "'s reply") + (v.replyPending && canSend() ? ' <small class="muted">Sending…</small>' : "") + "</strong>" +
+          '<p class="comm-text">' + esc(v.reply) + "</p></div></div>";
+      } else if (!coach) {
+        reply = '<p class="muted small vid-wait">' + esc(COACH) + " hasn't replied yet. You'll get a notification when she does.</p>";
+      }
+    }
+    var actions = [];
+    if (coach && v.kind === "form") actions.push('<button class="comm-link" data-vid-reply="' + esc(v.id) + '">' + (v.reply ? "Edit reply" : "Reply") + "</button>");
+    if (coach || v.kind === "form") actions.push('<button class="comm-link" data-vid-del="' + esc(v.id) + '">Remove</button>');
+    return '<article class="card vid-card' + (coach && v.kind === "form" && !v.reply ? " to-review" : "") + '">' +
+      '<div class="vid-head"><div><b>' + esc(coach ? v.client || "Client" : title) + "</b>" +
+        '<small class="muted">' + esc(coach ? title + " · " + videoDate(v.at) : videoDate(v.at)) + "</small></div>" +
+        (coach && v.kind === "form" && !v.reply ? '<span class="pill">To check</span>' : "") + "</div>" +
+      videoPlayerHtml(v) +
+      (v.note ? '<p class="comm-text vid-note">' + esc(v.note) + "</p>" : "") +
+      reply +
+      (actions.length ? '<div class="comm-actions"><span class="comm-spacer"></span>' + actions.join("") + "</div>" : "") +
+    "</article>";
+  }
+
+  function renderVideos() {
+    var list = videoList(), html = "";
+    if (isCoach()) {
+      var clients = ((state.data && state.data.clients) || []).filter(function (c) { return c.vid; });
+      if (state.vidTo && !clients.some(function (c) { return c.vid === state.vidTo; })) state.vidTo = "";
+      html += '<section class="card vid-send"><h2>Send a client a video</h2>' +
+        '<p class="muted small">Pick who it\'s for, then choose a video from your phone. Only that client can see it, on their My videos tab.</p>' +
+        (clients.length ? '<label class="ci-label" for="vid-to">Client</label>' +
+          '<select id="vid-to" class="lift-pick vid-select" data-vid-to><option value="">Choose a client…</option>' + clients.map(function (c) {
+            return '<option value="' + esc(c.vid) + '"' + (c.vid === state.vidTo ? " selected" : "") + ">" + esc(c.name) + "</option>";
+          }).join("") + "</select>" +
+          '<label class="ci-label" for="vid-lift">What is it? <span class="muted">(optional)</span></label>' +
+          '<input id="vid-lift" class="ci-input" data-vid-lift="1" type="text" maxlength="60" placeholder="e.g. Back squat, top set" value="' + esc(state.vidLift || "") + '">' +
+          '<label class="ci-label" for="vid-note">Note for them <span class="muted">(optional)</span></label>' +
+          '<textarea id="vid-note" class="ci-input" data-vid-note="1" rows="2" maxlength="1000" placeholder="e.g. Look how much better your depth is!">' + esc(state.vidNote || "") + "</textarea>" +
+          '<div class="comm-compose-row"><button class="btn primary" data-vid-pick>🎥 Choose video and send</button></div>'
+          : '<p class="empty">Your clients show here once the updated script is in your sheet.</p>') +
+        "</section>";
+      var shown = state.vidTo ? list.filter(function (v) { return v.who === state.vidTo; }) : list;
+      var review = shown.filter(function (v) { return v.kind === "form" && !v.reply; });
+      var rest = shown.filter(function (v) { return !(v.kind === "form" && !v.reply); });
+      if (review.length) html += '<h3 class="vid-section">Form checks to look at (' + review.length + ")</h3>" + review.map(videoCardHtml).join("");
+      html += '<h3 class="vid-section">' + (state.vidTo ? "Videos for this client" : "All videos") + "</h3>" +
+        (rest.length ? rest.map(videoCardHtml).join("") : '<p class="empty">' + (review.length ? "Nothing else yet." : "No videos yet.") + "</p>");
+    } else {
+      html += '<section class="card vid-send"><h2>My videos</h2>' +
+        '<p class="muted small">Videos ' + esc(COACH) + " takes in your sessions show up here. You can also send her a form video of your back squat, deadlift or bench press and she'll reply with what she sees. Only you and " + esc(COACH) + " can see these.</p>" +
+        '<label class="ci-label" for="vid-lift">Send ' + esc(COACH) + ' a form video</label>' +
+        '<select id="vid-lift" class="lift-pick vid-select" data-vid-form-lift><option value="">Which lift?</option>' + VIDEO_LIFTS.map(function (l) {
+          return '<option' + (l === state.vidLift ? " selected" : "") + ">" + esc(l) + "</option>";
+        }).join("") + "</select>" +
+        '<label class="ci-label" for="vid-note">Note for ' + esc(COACH) + ' <span class="muted">(optional)</span></label>' +
+        '<textarea id="vid-note" class="ci-input" data-vid-note="1" rows="2" maxlength="1000" placeholder="e.g. 60 kg, felt my hips shoot up">' + esc(state.vidNote || "") + "</textarea>" +
+        '<div class="comm-compose-row"><button class="btn primary" data-vid-pick>🎥 Choose video and send</button></div>' +
+        "</section>";
+      html += list.length ? list.map(videoCardHtml).join("") : '<p class="empty">No videos yet.</p>';
+    }
+    // Keep a playing video playing when the screen redraws.
+    var playing = state.playing ? document.querySelector('#videosPane [data-vid-frame="' + CSS.escape(state.playing) + '"]') : null;
+    $("videosPane").innerHTML = html;
+    if (playing) {
+      var fresh = document.querySelector('#videosPane [data-vid-frame="' + CSS.escape(state.playing) + '"]');
+      if (fresh) fresh.replaceWith(playing);
+    }
+    markVideosSeen();
+  }
+  // From the 🎥 button on back squat, deadlift and bench press: send straight from the session.
+  function formVideoFromExercise(key) {
+    var info = state.info[key] || {};
+    var lift = liftOf(info.name);
+    if (!lift) return;
+    pickVideo(function (file) {
+      var note = window.prompt("Anything " + COACH + " should know? (weight, reps, how it felt). Leave blank to skip.", "");
+      if (note === null) return;
+      var logged = getWeights()[key];
+      var where = [info.week, info.session, logged && logged.w].filter(Boolean).join(", ");
+      uploadVideo(file, { lift: lift.name, note: where + (note.trim() ? (where ? ": " : "") + note.trim() : "") });
+    });
+  }
+
   // ---------- push notifications (OneSignal) ----------
   // Only switched on once Kirst puts her OneSignal App ID on the Settings tab of the sheet.
   // OneSignal's worker lives in push/onesignal/ so it doesn't get in the way of the app's own sw.js.
@@ -1456,7 +1723,10 @@
       active.getAttribute("data-prof") != null ? "data-prof" :
       active.getAttribute("data-todo-new") != null ? "data-todo-new" :
       active.getAttribute("data-comm-new") != null ? "data-comm-new" :
-      active.getAttribute("data-comm-reply-text") != null ? "data-comm-reply-text" : null);
+      active.getAttribute("data-comm-reply-text") != null ? "data-comm-reply-text" :
+      active.getAttribute("data-vid-reply-text") != null ? "data-vid-reply-text" :
+      active.getAttribute("data-vid-note") != null ? "data-vid-note" :
+      active.getAttribute("data-vid-lift") != null ? "data-vid-lift" : null);
     var typing = attr ? active.getAttribute(attr) : null;
     var caret = typing ? [active.selectionStart, active.selectionEnd] : null;
     renderAll();
@@ -1510,6 +1780,7 @@
     if (state.view === "profile") { renderProfile(); $("profilePane").insertAdjacentHTML("beforeend", pushCardHtml()); }
     if (state.view === "clients") renderClients();
     if (state.view === "community") renderCommunity();
+    if (state.view === "videos") renderVideos();
     renderProfileNudge();
 
     var note = $("coachNote");
@@ -1641,6 +1912,9 @@
     }
     // The main lifts are taught in person, not from videos.
     var book = safeUrl(CONFIG.techniqueBookingUrl);
+    if (!sw && !isCoach() && liftOf(ex.name)) {
+      swapLine += '<div class="ex-formvid"><button class="swap-btn" data-formvid="' + esc(key) + '">🎥 Send ' + esc(COACH) + " a form video</button></div>";
+    }
     if (ex.locked && !sw && !isCoach()) {
       swapLine += '<div class="ex-technique">Not confident on your form? ' +
         (book ? '<a href="' + esc(book) + '" target="_blank" rel="noopener">Book a session with ' + esc(COACH) + "</a>" : "Book a session with " + esc(COACH)) +
@@ -1720,6 +1994,65 @@
     if (state.view === "community") fetchCommunity();
     render();
     window.scrollTo(0, 0);
+  });
+
+  $("videosPane").addEventListener("input", function (e) {
+    var t = e.target;
+    if (!t.getAttribute) return;
+    if (t.getAttribute("data-vid-note") != null) state.vidNote = t.value;
+    if (t.getAttribute("data-vid-lift") != null) state.vidLift = t.value;
+    if (t.getAttribute("data-vid-reply-text") != null) state.vidReplyDraft = t.value;
+  });
+  $("videosPane").addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t.getAttribute) return;
+    if (t.getAttribute("data-vid-to") != null) { state.vidTo = t.value; render(); }
+    if (t.getAttribute("data-vid-form-lift") != null) state.vidLift = t.value;
+  });
+  $("videosPane").addEventListener("click", function (e) {
+    var b;
+    if ((b = e.target.closest("[data-vid-play]"))) { state.playing = b.getAttribute("data-vid-play"); render(); return; }
+    if (e.target.closest("[data-vid-pick]")) {
+      if (isCoach()) {
+        var c = ((state.data && state.data.clients) || []).filter(function (x) { return x.vid && x.vid === state.vidTo; })[0];
+        if (!c) { window.alert("Pick the client it's for first."); return; }
+        pickVideo(function (file) { uploadVideo(file, { to: c.vid, toName: c.name, lift: state.vidLift.trim(), note: state.vidNote.trim() }); });
+      } else {
+        if (VIDEO_LIFTS.indexOf(state.vidLift) === -1) { window.alert("Pick which lift it is first."); return; }
+        pickVideo(function (file) { uploadVideo(file, { lift: state.vidLift, note: state.vidNote.trim() }); });
+      }
+      return;
+    }
+    if ((b = e.target.closest("[data-vid-reply]"))) {
+      var rid = b.getAttribute("data-vid-reply");
+      var rv = videoList().filter(function (v) { return v.id === rid; })[0];
+      state.vidReplyOpen = state.vidReplyOpen === rid ? null : rid;
+      state.vidReplyDraft = rv ? rv.reply || "" : "";
+      render();
+      var box = document.querySelector('[data-vid-reply-text="' + CSS.escape(rid) + '"]');
+      if (box) box.focus();
+      return;
+    }
+    if ((b = e.target.closest("[data-vid-send-reply]"))) {
+      var to = b.getAttribute("data-vid-send-reply"), text = state.vidReplyDraft.trim();
+      if (!text) return;
+      if (!canSend()) { window.alert("Replies work once you open the app with your own code."); return; }
+      queue({ type: "videoreply", key: to, video: to, text: text });
+      videoDone.reply[to] = text;
+      state.vidReplyOpen = null; state.vidReplyDraft = "";
+      render();
+      return;
+    }
+    if ((b = e.target.closest("[data-vid-del]"))) {
+      if (!window.confirm(isCoach() ? "Remove this video? It comes out of the app and goes to the bin in your Google Drive." : "Remove this video? " + COACH + " won't see it any more.")) return;
+      var vid = b.getAttribute("data-vid-del");
+      if (!canSend()) return;
+      queue({ type: "videohide", video: vid });
+      videoDone.hide[vid] = 1;
+      videoJustSent = videoJustSent.filter(function (v) { return v.id !== vid; });
+      if (state.playing === vid) state.playing = null;
+      render();
+    }
   });
 
   $("communityPane").addEventListener("input", function (e) {
@@ -1852,6 +2185,8 @@
       render();
       return;
     }
+    var formVid = e.target.closest("[data-formvid]");
+    if (formVid) { formVideoFromExercise(formVid.getAttribute("data-formvid")); return; }
     var swapBtn = e.target.closest("[data-swap]");
     if (swapBtn) {
       var sk = swapBtn.getAttribute("data-swap");
@@ -2107,7 +2442,7 @@
   var linkCode = normaliseCode(params.get("code"));
   if (linkCode) save(KEY_CODE, linkCode);
   // Tapping a Lift Club notification opens the app on that tab.
-  if (params.get("view") === "community") state.view = "community";
+  if (params.get("view") === "community" || params.get("view") === "videos") state.view = params.get("view");
   if (linkCode || params.get("view")) history.replaceState(null, "", location.pathname);
 
   state.code = load(KEY_CODE, null);
