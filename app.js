@@ -18,6 +18,8 @@
   var KEY_PUSH_ASKED = "scoutco.pushAsked";
   var KEY_VIDEOS_SEEN = "scoutco.videosSeen";
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
+  var KEY_AGREE = "scoutco.agreeSigned";
+  var KEY_RENEW = "scoutco.renewSeen";
 
   var COACH = String(CONFIG.coachName || "Kirst");
 
@@ -26,7 +28,7 @@
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
       view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
       commDraft: "", commPhoto: null, commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
-      upload: null, playing: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "" };
+      upload: null, playing: null, ag: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "" };
   }
   var state = freshState();
 
@@ -152,7 +154,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW);
     videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
@@ -170,7 +172,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -498,6 +500,7 @@
       v.push(["videos", "My videos"]);
       v.push(["community", "Lift Club Community"]);
       v.push(["profile", "Profile"]);
+      if (agreement()) v.push(["agreement", "Agreement"]);
     }
     if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
     return v;
@@ -514,7 +517,7 @@
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) ? '<span class="dot" aria-label="to do"></span>' : "") +
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) || (v[0] === "agreement" && agreementDue()) ? '<span class="dot" aria-label="to do"></span>' : "") +
         (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") +
         (v[0] === "videos" && toReview ? '<span class="count" aria-label="' + toReview + ' to check">' + toReview + "</span>" : "") + "</button>";
     }).join("");
@@ -527,6 +530,7 @@
     $("clientsPane").classList.toggle("hidden", state.view !== "clients");
     $("communityPane").classList.toggle("hidden", state.view !== "community");
     $("videosPane").classList.toggle("hidden", state.view !== "videos");
+    $("agreementPane").classList.toggle("hidden", state.view !== "agreement");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -1808,6 +1812,270 @@
       '<button class="btn primary" data-goto-profile>Fill in my profile</button>';
   }
 
+  // ---------- client agreement ----------
+  // Kirst adds a row on the Agreements tab and ticks "Send to app". The client reads it here,
+  // with their own details filled in, and signs by typing their name. They only sign once.
+  var POLICIES_URL = "https://www.scoutco.com.au/policies";
+  function agreement() { return !isCoach() && state.data && state.data.agreement && state.data.agreement.id ? state.data.agreement : null; }
+  function localSigned() {
+    var a = agreement(), s = load(KEY_AGREE, null);
+    return a && s && s.code === state.code && s.id === a.id ? s : null;
+  }
+  function agreementSigned() { var a = agreement(); return !!(a && (a.signed || localSigned())); }
+  function agreementDue() { return !!agreement() && !agreementSigned(); }
+  function agOnline(a) { return /online/i.test(String(a.type || "")); }
+
+  function agreementTerms(a) {
+    var online = agOnline(a);
+    var renewal = [
+      "You sign up for one 12-week block at a time.",
+      "Your membership renews automatically for another 12-week block at the end of each block, unless you or " + COACH + " ends it.",
+      "You only sign this agreement once. It carries over to every new block, so you don't need to sign again.",
+      "About 3 weeks before each block ends, " + COACH + " will send you a renewal notice with your next block's start date, " +
+        (online ? "" : "session time, ") + "price and payment details. Anything new in it applies from the next block. Price changes always come with at least 4 weeks' notice.",
+      "If you don't want to renew, tell " + COACH + " at least 2 weeks before your block ends."
+    ];
+    var payment = [
+      "The price is for the whole 12-week service" + (online ? "" : ", not per session") + ". Paying weekly or fortnightly is just a convenience.",
+      "Upfront: you'll get an invoice for the full block at the start, paid by bank transfer.",
+      "Weekly or fortnightly: an equal share of the block price is charged automatically through Acuity (payments processed by Stripe).",
+      online ? "Payments are due for the whole block whether or not you complete every session or check-in."
+        : "You pay for every session in the block whether you attend or not. Missed sessions aren't refunded or credited.",
+      online ? "No refunds for change of mind once a block has started. Refunds are only given when " + COACH + " can't deliver the service, or as Australian Consumer Law requires."
+        : "No refunds for change of mind once a block has started. Refunds are only given when " + COACH + " cancels and can't reschedule, or as Australian Consumer Law requires.",
+      "If a payment doesn't go through, " + (online ? "coaching" : "sessions") + " may be paused until your account is up to date.",
+      "Prices only change from your next block, with at least 4 weeks' notice. ScoutCo isn't registered for GST, so no GST is charged."
+    ];
+    var terms = online ? [
+      ["What you get", [
+        "A 12-week block of online strength and conditioning coaching.",
+        "A training program written for you, delivered through the ScoutCo app.",
+        "A weekly check-in in the app, with a reply from " + COACH + ".",
+        "Form-check feedback on videos you send through the app.",
+        "A check-in call with " + COACH + " near the end of each 4-week phase, booked through the link in the app."]],
+      ["Your 12-week block and renewal", renewal],
+      ["Training on your own and check-in calls", [
+        "You train in your own time, so warm up, use safe equipment and a clear space, and only lift weights you can control. If you're unsure about a lift, send a form video before going heavier.",
+        "To change a booked check-in call, use the link in your booking email, with as much notice as you can.",
+        "If " + COACH + " cancels a call, it will be rescheduled."]],
+      ["Payment", payment],
+      ["Health and safety", [
+        "You'll complete the ScoutCo intake form honestly before you start, and tell " + COACH + " about any change in your health, injuries, medications or pregnancy.",
+        "If you have health issues that affect training, it's your responsibility to seek medical advice.",
+        "Stop and tell " + COACH + " about pain, dizziness or anything that doesn't feel right.",
+        "Strength training carries some risk of soreness, strains or, rarely, more serious injury. Because you train without " + COACH + " there, you agree to follow the program as written and train within your limits."]]
+    ] : [
+      ["What you get", [
+        "A 12-week block of strength and conditioning coaching, with one face-to-face session at your set time each " + (/fortnight/i.test(a.type || "") ? "fortnight" : "week") + ".",
+        "A training program written for you, delivered through the ScoutCo app.",
+        "Support from " + COACH + " between sessions through the app."]],
+      ["Your 12-week block and renewal", renewal],
+      ["Your session time", [
+        "Your set day and time is held just for you for the whole block. There are no other regular session times.",
+        "If you can't make a session, let " + COACH + " know as early as you can. A make-up session may be offered if there's space, but it isn't guaranteed.",
+        "If " + COACH + " cancels, your session will be rescheduled, or refunded pro-rata if a new time can't be found."]],
+      ["Payment", payment],
+      ["Health and safety", [
+        "You'll complete the ScoutCo intake form honestly before your first session, and tell " + COACH + " about any change in your health, injuries, medications or pregnancy.",
+        "If you have health issues that affect training, it's your responsibility to seek medical advice.",
+        "Tell " + COACH + " straight away about pain, dizziness or anything that doesn't feel right.",
+        "Strength training carries some risk of soreness, strains or, rarely, more serious injury. " + COACH + " will coach you to train safely, and you agree to train within your limits."]]
+    ];
+    terms.push(["Ending the agreement", [
+      "Either of us can end the agreement by giving at least 2 weeks' notice before the end of the current block.",
+      COACH + " may end the agreement if the policies are repeatedly not followed, or if continuing isn't safe. You'll be given notice and refunded any unused " + (online ? "part of the block" : "sessions") + " pro-rata."]]);
+    terms.push(["ScoutCo policies", [
+      "This agreement includes the ScoutCo policies at scoutco.com.au/policies: Cancellations, Payments and refunds, Privacy, Health and safety, Lift Club guidelines, and Terms of service.",
+      "Policy changes are announced at least 14 days ahead on ScoutCo's social media and in the app.",
+      "Nothing in this agreement limits your rights under the Australian Consumer Law. This agreement is governed by Queensland law."]]);
+    return terms;
+  }
+  var AG_PARENT = [
+    "I have read the client's ScoutCo agreement and the ScoutCo policies at scoutco.com.au/policies, and I agree to them on the client's behalf.",
+    "I have completed, or helped complete, the ScoutCo intake form honestly, and I'll tell " + COACH + " about any change in the client's health.",
+    "I am responsible for payment for each 12-week block, and for giving 2 weeks' notice if we don't want to renew.",
+    "I am responsible for getting the client to and from face-to-face sessions on time, and for their supervision before and after.",
+    COACH + " may contact me about the client's training, health or safety.",
+    "Everyone on the ScoutCo app, including clients under 18, has access to Lift Club. I agree to my child using Lift Club and following the Lift Club community guidelines.",
+    "Kirsty McCall holds a current Queensland blue card (Working with Children Check)."
+  ];
+  function agPartyLine(name) {
+    return "Between ScoutCo (Scout Coaching & Therapy), run by Kirsty McCall (\"" + COACH + "\"), ABN 67 991 210 286, Logan QLD, Kirsty@scoutco.com.au, and " + (name || "the client") + ".";
+  }
+  function agDetails(a) {
+    var rows = [["Agreement", a.type], ["Start date", a.start]];
+    if (!agOnline(a)) rows.push(["Session day and time", a.time]);
+    rows.push(["Price per 12-week block", a.price], ["How you'll pay", a.payment]);
+    return rows.filter(function (r) { return String(r[1] || "").trim(); });
+  }
+  function agMediaChoices(a) {
+    return a.under18 ? ["Yes, my child may be featured (first name only, never their full name or school)", "No thanks"]
+      : ["Yes, I'm happy to be featured in ScoutCo media", "No thanks"];
+  }
+  // The exact words the client agreed to, saved on the Agreements tab as their copy.
+  function agreementText(a, d) {
+    var client = (state.data && state.data.client) || {};
+    var out = ["ScoutCo " + (agOnline(a) ? "online" : "face-to-face") + " coaching agreement", agPartyLine(client.name), ""];
+    agDetails(a).forEach(function (r) { out.push(r[0] + ": " + r[1]); });
+    agreementTerms(a).forEach(function (t, i) {
+      out.push("", (i + 1) + ". " + t[0]);
+      t[1].forEach(function (p) { out.push("- " + p); });
+    });
+    out.push("", "Photos and videos for ScoutCo media: " + (d.media || ""));
+    if (a.under18) {
+      out.push("", "Parent or guardian consent");
+      AG_PARENT.forEach(function (p) { out.push("- " + p); });
+      out.push("Parent or guardian: " + d.parentName + " (" + d.relationship + "), " + d.parentContact + (d.emergency ? ". Emergency contact: " + d.emergency : ""));
+    }
+    out.push("", "Signed by typing their name: " + d.name + (a.under18 ? " and " + d.parentName + " (parent or guardian)" : ""));
+    return out.join("\n");
+  }
+
+  function renderAgreement() {
+    var a = agreement();
+    if (!a) { $("agreementPane").innerHTML = ""; return; }
+    var client = (state.data && state.data.client) || {};
+    var mine = localSigned();
+    var signed = agreementSigned();
+    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "agreement"; });
+    var details = '<dl class="ag-details">' + agDetails(a).map(function (r) {
+      return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>";
+    }).join("") + "</dl>";
+    var terms = agreementTerms(a).map(function (t, i) {
+      return "<h4>" + (i + 1) + ". " + esc(t[0]) + '</h4><ul class="ag-terms">' + t[1].map(function (p) {
+        return "<li>" + esc(p).replace("scoutco.com.au/policies", '<a href="' + POLICIES_URL + '" target="_blank" rel="noopener">scoutco.com.au/policies</a>') + "</li>";
+      }).join("") + "</ul>";
+    }).join("");
+    var head = "<h2>Your ScoutCo agreement</h2>" +
+      '<p class="muted small">' + esc(agPartyLine(client.name)) + "</p>" + details;
+
+    if (signed) {
+      var by = (mine && mine.name) || a.signedBy || "";
+      var on = (mine && mine.at) || a.signedOn || 0;
+      var media = (mine && mine.media) || a.media || "";
+      $("agreementPane").innerHTML =
+        '<section class="card ag-signed"><div class="ag-tick" aria-hidden="true">✓</div><div><strong>Signed' +
+          (by ? " by " + esc(by) : "") + "</strong>" +
+          '<div class="small muted">' + (on ? esc(new Date(+on).toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" })) : "") +
+          (pending && canSend() ? " · Sending to " + esc(COACH) + "…" : "") + "</div></div></section>" +
+        '<section class="card">' + head +
+          '<details class="ag-more"><summary>Read the full agreement</summary>' + terms + "</details>" +
+          (media ? '<p class="small"><b>Photos and videos:</b> ' + esc(media) + "</p>" : "") +
+          (renewal() ? '<div class="book-call ag-renew">' + renewalHtml(renewal(), false) + "</div>" : "") +
+          '<p class="muted small">You don\'t need to sign again when your block renews. To change your photo choice or anything else, just tell ' + esc(COACH) + ".</p>" +
+        "</section>";
+      return;
+    }
+
+    if (!state.ag || state.ag.id !== a.id) state.ag = { id: a.id };
+    var d = state.ag;
+    var radio = function (val) {
+      return '<label class="ag-choice"><input type="radio" name="ag-media" data-ag-media value="' + esc(val) + '"' + (d.media === val ? " checked" : "") + "> <span>" + esc(val) + "</span></label>";
+    };
+    var input = function (id, label, placeholder, opt) {
+      return '<label class="ci-label" for="ag-' + id + '">' + esc(label) + (opt ? ' <span class="muted">(optional)</span>' : "") + "</label>" +
+        '<input id="ag-' + id + '" class="ci-input" data-ag="' + id + '" type="text" maxlength="200" autocomplete="off" placeholder="' + esc(placeholder) + '" value="' + esc(d[id] || "") + '">';
+    };
+    $("agreementPane").innerHTML =
+      '<section class="card">' + head +
+        '<p class="small">Please read it all. If anything is unclear, ask ' + esc(COACH) + " before you sign.</p>" +
+        terms +
+      "</section>" +
+      '<section class="card">' +
+        "<h3>Photos and videos for ScoutCo media</h3>" +
+        '<p class="muted small">ScoutCo would love to share your wins. With your OK, photos or videos of ' + (a.under18 ? "your child" : "you") +
+          " training may be used on ScoutCo's website and social media. You can change your mind any time by telling " + esc(COACH) + ".</p>" +
+        agMediaChoices(a).map(radio).join("") +
+      "</section>" +
+      (a.under18 ?
+        '<section class="card"><h3>Parent or guardian consent</h3>' +
+          '<p class="muted small">The client is under 18, so a parent or legal guardian fills in this part. As the parent or guardian, I agree that:</p>' +
+          '<ul class="ag-terms">' + AG_PARENT.map(function (p) { return "<li>" + esc(p) + "</li>"; }).join("") + "</ul>" +
+          input("parentName", "Parent or guardian full name (your signature)", "Type your full name") +
+          input("relationship", "Relationship to client", "e.g. Mum") +
+          input("parentContact", "Parent or guardian phone and email", "") +
+          input("emergency", "Emergency contact name and phone, if different", "", true) +
+          '<label class="ag-check"><input type="checkbox" data-ag-check="parentAgree"' + (d.parentAgree ? " checked" : "") +
+            "> <span>I agree, as the client's parent or guardian. Typing my name above is my signature.</span></label>" +
+        "</section>" : "") +
+      '<section class="card"><h3>Sign</h3>' +
+        '<label class="ag-check"><input type="checkbox" data-ag-check="agree"' + (d.agree ? " checked" : "") +
+          "> <span>I have read and agree to my ScoutCo agreement and the ScoutCo policies.</span></label>" +
+        input("name", "Type your full name as your signature", "Your full name") +
+        (d.error ? '<p class="error">' + esc(d.error) + "</p>" : "") +
+        '<div class="ci-actions"><span class="small muted">Date: ' + esc(new Date().toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" })) + "</span>" +
+          '<button class="btn primary" data-ag-sign>Sign agreement</button></div>' +
+      "</section>";
+  }
+
+  function signAgreement() {
+    var a = agreement(), d = state.ag;
+    if (!a || !d) return;
+    ["name", "parentName", "relationship", "parentContact", "emergency"].forEach(function (f) { d[f] = String(d[f] || "").trim().slice(0, 200); });
+    var miss = [];
+    if (!d.media) miss.push("choose yes or no for photos and videos");
+    if (a.under18) {
+      if (!d.parentName) miss.push("add the parent or guardian's name");
+      if (!d.relationship) miss.push("add their relationship to you");
+      if (!d.parentContact) miss.push("add their phone and email");
+      if (!d.parentAgree) miss.push("tick the parent or guardian box");
+    }
+    if (!d.agree) miss.push("tick the box to agree");
+    if (d.name.length < 2) miss.push("type your full name");
+    if (miss.length) {
+      d.error = "Please " + miss.join(", ") + ".";
+      render();
+      return;
+    }
+    d.error = "";
+    queue({ type: "agreement", key: a.id, media: d.media, name: d.name, parentName: a.under18 ? d.parentName : "",
+      relationship: a.under18 ? d.relationship : "", parentContact: a.under18 ? d.parentContact : "",
+      emergency: a.under18 ? d.emergency : "", text: agreementText(a, d) });
+    save(KEY_AGREE, { code: state.code, id: a.id, name: d.name, media: d.media, at: Date.now() });
+    state.ag = null;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  // A card on the Program tab until they've signed.
+  function renderAgreeNudge() {
+    var el = $("agreeNudge"), due = agreementDue();
+    el.classList.toggle("hidden", !due);
+    if (!due) return;
+    el.innerHTML = "<div><strong>Your agreement is ready to sign</strong>" +
+      "<div>Read your ScoutCo agreement and sign it in the app. It takes about 5 minutes, and you only do it once.</div></div>" +
+      '<button class="btn primary" data-goto-agreement>Read and sign</button>';
+  }
+
+  // ---------- renewal notice ----------
+  // Before a client's next block, Kirst ticks a row on the Renewals tab and it shows here. Nothing to sign.
+  function renewal() { return !isCoach() && state.data && state.data.renewal && state.data.renewal.id ? state.data.renewal : null; }
+  function renewalSeen() {
+    var r = renewal(), s = load(KEY_RENEW, null);
+    return !!(r && (r.seen || (s && s.code === state.code && s.id === r.id)));
+  }
+  function renewalHtml(r, withButton) {
+    var rows = [["Session day and time", r.time], ["Price for the 12-week block", r.price], ["Payment", r.payment]]
+      .filter(function (x) { return String(x[1] || "").trim(); });
+    return "<div><strong>Your next block starts " + esc(r.start) + "</strong>" +
+      (rows.length ? '<dl class="ag-details">' + rows.map(function (x) { return "<dt>" + esc(x[0]) + "</dt><dd>" + esc(x[1]) + "</dd>"; }).join("") + "</dl>" : "") +
+      "<div>Everything else stays the same as your ScoutCo agreement. There's nothing you need to do to keep going. " +
+      "If you'd like to change anything, let " + esc(COACH) + " know by " + esc(r.replyBy) + ".</div></div>" +
+      (withButton ? '<button class="btn primary" data-renew-ok>Got it</button>' : "");
+  }
+  function renderRenewNote() {
+    var el = $("renewNote"), r = renewal(), showIt = !!r && !renewalSeen();
+    el.classList.toggle("hidden", !showIt);
+    if (showIt) el.innerHTML = renewalHtml(r, true);
+  }
+  function renewalOk() {
+    var r = renewal();
+    if (!r) return;
+    queue({ type: "renewal", key: r.id });
+    save(KEY_RENEW, { code: state.code, id: r.id, at: Date.now() });
+    render();
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
@@ -1816,6 +2084,7 @@
       active.getAttribute("data-weight") != null ? "data-weight" :
       active.getAttribute("data-ci") != null ? "data-ci" :
       active.getAttribute("data-prof") != null ? "data-prof" :
+      active.getAttribute("data-ag") != null ? "data-ag" :
       active.getAttribute("data-todo-new") != null ? "data-todo-new" :
       active.getAttribute("data-comm-new") != null ? "data-comm-new" :
       active.getAttribute("data-comm-reply-text") != null ? "data-comm-reply-text" :
@@ -1876,7 +2145,10 @@
     if (state.view === "clients") renderClients();
     if (state.view === "community") renderCommunity();
     if (state.view === "videos") renderVideos();
+    if (state.view === "agreement") renderAgreement();
     renderProfileNudge();
+    renderAgreeNudge();
+    renderRenewNote();
 
     var note = $("coachNote");
     if (client.message) {
@@ -2267,6 +2539,29 @@
     if (e.target.closest("[data-prof-save]")) { saveProfile(); return; }
     if (e.target.closest("[data-prof-photo-del]") && window.confirm("Remove your photo?")) setPhoto("");
   });
+  $("renewNote").addEventListener("click", function (e) {
+    if (e.target.closest("[data-renew-ok]")) renewalOk();
+  });
+  $("agreeNudge").addEventListener("click", function (e) {
+    if (!e.target.closest("[data-goto-agreement]")) return;
+    state.view = "agreement";
+    render();
+    window.scrollTo(0, 0);
+  });
+  $("agreementPane").addEventListener("input", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-ag");
+    if (f && state.ag) state.ag[f] = e.target.value;
+  });
+  $("agreementPane").addEventListener("change", function (e) {
+    var t = e.target;
+    if (!state.ag || !t.getAttribute) return;
+    if (t.getAttribute("data-ag-media") != null) state.ag.media = t.value;
+    var c = t.getAttribute("data-ag-check");
+    if (c) state.ag[c] = t.checked;
+  });
+  $("agreementPane").addEventListener("click", function (e) {
+    if (e.target.closest("[data-ag-sign]")) signAgreement();
+  });
   $("profileNudge").addEventListener("click", function (e) {
     if (!e.target.closest("[data-goto-profile]")) return;
     state.view = "profile";
@@ -2493,6 +2788,8 @@
       return x;
     }
     return {
+      renewal: { id: "demo-r", start: "25 January 2027", replyBy: "10 January 2027", time: "", price: "$540", payment: "Fortnightly via Acuity", seen: false },
+      agreement: { id: "demo", type: "Online", start: "2 November 2026", time: "", price: "$540", payment: "Fortnightly via Acuity", under18: false, signed: false },
       client: { name: "Demo Athlete", type: "Online only", sessions: "Train on your own schedule, 3 sessions a week", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {
         name: "Demo",
