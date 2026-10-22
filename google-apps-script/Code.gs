@@ -21,7 +21,8 @@
  *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Renewals: a notice before each client's next block. Tick "Send to app" and they see it in their app
- *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements)
+ *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements).
+ *               Each signed agreement is also saved as a PDF in the "ScoutCo agreements" folder in your Drive
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -2363,7 +2364,8 @@ function communityPhotoOk_(id) {
 var AGREEMENTS_TAB = "Agreements";
 var AGREEMENT_HEADERS = ["Client", "Agreement", "Start date", "Session day and time", "Price per block", "Payment", "Under 18",
   "Send to app", "Status", "Signed by", "Signed on", "Photos and videos", "Parent or guardian", "Relationship",
-  "Parent phone and email", "Emergency contact", "Copy of agreement", "ID"];
+  "Parent phone and email", "Emergency contact", "Copy of agreement", "PDF", "ID"];
+var AGREEMENT_FOLDER = "ScoutCo agreements";
 var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online"];
 var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity"];
 
@@ -2400,7 +2402,7 @@ function setupAgreements() {
   SpreadsheetApp.getUi().alert("Done! To send a client their agreement:\n\n" +
     "1. Add a row on the Agreements tab: pick the client, the agreement type, start date, session day and time (face to face only), price per block, how they'll pay, and whether they're under 18.\n" +
     "2. Tick \"Send to app\".\n\n" +
-    "Next time they open the app they'll see \"Your agreement is ready to sign\". When they sign, the grey columns fill in (including a full copy of what they agreed to) and you get an email.\n\n" +
+    "Next time they open the app they'll see \"Your agreement is ready to sign\". When they sign, the grey columns fill in (including a full copy of what they agreed to), a PDF is saved in the \"ScoutCo agreements\" folder in your Drive, and you get an email.\n\n" +
     "Clients only sign once. It carries over each time their block renews.\n\n" +
     "Renewals: about 3 weeks before a client's block ends, add a row on the Renewals tab (client, next block start date, session time, price, payment) and tick \"Send to app\". " +
     "They see \"Your next block is coming up\" with the details and the date to tell you if they want to stop, and tap Got it. Nothing to sign.");
@@ -2480,22 +2482,72 @@ function saveAgreement_(ss, client, ev) {
     set("Parent phone and email", cell_(clip_(ev.parentContact, 200)));
     set("Emergency contact", cell_(clip_(ev.emergency, 200)));
     if (c["Copy of agreement"]) sheet.getRange(row, c["Copy of agreement"]).setValue(cell_(clip_(ev.text, 40000))).setWrap(false);
-    return { name: client.Name || signedBy, signedBy: signedBy, media: clip_(ev.media, 200), text: clip_(ev.text, 40000) };
+    return { name: client.Name || signedBy, signedBy: signedBy, media: clip_(ev.media, 200), text: clip_(ev.text, 40000), row: row };
   }
   return null;
 }
 
-/** Emails you a copy when a client signs. */
+/** Saves a PDF of each signed agreement in your Drive, links it on the row, and emails you a copy. */
 function notifyAgreement_(ss, signed) {
-  try {
-    var to = Session.getEffectiveUser().getEmail();
-    if (!to) return;
-    signed.forEach(function (s) {
+  signed.forEach(function (s) {
+    var pdf = null;
+    try { pdf = agreementPdf_(ss, s); } catch (err) { /* the row still has the full copy */ }
+    try {
+      var to = Session.getEffectiveUser().getEmail();
+      if (!to) return;
+      var opts = pdf ? { attachments: [pdf.getAs("application/pdf")] } : {};
       MailApp.sendEmail(to, "ScoutCo: " + s.name + " signed their agreement",
         s.name + " signed their ScoutCo agreement in the app.\n\nPhotos and videos: " + s.media +
-        "\n\nIt's saved on the Agreements tab:\n" + ss.getUrl() + "\n\n---------- What they agreed to ----------\n\n" + s.text);
-    });
-  } catch (err) { /* email is a bonus; the signature is already saved */ }
+        "\n\nIt's saved on the Agreements tab:\n" + ss.getUrl() +
+        (pdf ? "\n\nThe PDF is attached and saved in the \"" + AGREEMENT_FOLDER + "\" folder in your Google Drive." : "") +
+        "\n\n---------- What they agreed to ----------\n\n" + s.text, opts);
+    } catch (err) { /* email is a bonus; the signature is already saved */ }
+  });
+}
+
+/** The "ScoutCo agreements" folder in your Drive (made the first time). Only you can open it. */
+function agreementFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("agreementFolder");
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(AGREEMENT_FOLDER);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(AGREEMENT_FOLDER);
+  props.setProperty("agreementFolder", folder.getId());
+  return folder;
+}
+
+/** Makes "Agreement - <name> - <date>.pdf" from the words the client agreed to, and links it on their row. */
+function agreementPdf_(ss, s) {
+  var tz = ss.getSpreadsheetTimeZone(), now = new Date();
+  var h = function (t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); };
+  var lines = String(s.text || "").split("\n"), body = "", inList = false;
+  lines.forEach(function (line, i) {
+    var isItem = /^- /.test(line);
+    if (inList && !isItem) { body += "</ul>"; inList = false; }
+    if (i === 0) body += "<h1>" + h(line) + "</h1>";
+    else if (isItem) { if (!inList) { body += "<ul>"; inList = true; } body += "<li>" + h(line.slice(2)) + "</li>"; }
+    else if (/^\d+\. /.test(line) || line === "Parent or guardian consent") body += "<h2>" + h(line) + "</h2>";
+    else if (line.trim()) body += "<p>" + h(line) + "</p>";
+  });
+  if (inList) body += "</ul>";
+  var html = '<html><body style="font-family:Arial,sans-serif;font-size:11pt;color:#111;line-height:1.4">' + body +
+    '<p style="margin-top:24px;color:#555">Signed in the ScoutCo app on ' + h(Utilities.formatDate(now, tz, "d MMMM yyyy 'at' h:mm a")) + ".</p></body></html>";
+  var name = "Agreement - " + String(s.name).replace(/[\\\/:*?"<>|]/g, "") + " - " + Utilities.formatDate(now, tz, "yyyy-MM-dd") + ".pdf";
+  var file = agreementFolder_().createFile(Utilities.newBlob(html, "text/html", "agreement.html").getAs("application/pdf").setName(name));
+
+  var sheet = ss.getSheetByName(AGREEMENTS_TAB);
+  if (sheet && s.row) {
+    var c = agreementCols_(sheet);
+    var col = c.PDF;
+    if (!col) { // tab made before PDFs: add the column on the end
+      col = sheet.getLastColumn() + 1;
+      sheet.getRange(1, col).setValue("PDF").setFontWeight("bold").setBackground("#ede9fe");
+    }
+    sheet.getRange(s.row, col).setFormula('=HYPERLINK("' + file.getUrl() + '","Open PDF")');
+  }
+  return file;
 }
 
 /* Renewal notices: you fill in a row before a client's next block and tick "Send to app".
