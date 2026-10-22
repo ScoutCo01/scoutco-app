@@ -218,6 +218,6 @@ Setup: make a free OneSignal account and a Web app for `https://scoutco01.github
 - Every video is saved in a **ScoutCo videos** folder in your Google Drive and listed on the **Videos** tab of the sheet. You can also type a reply in the **Reply from Kirst** column.
 - Tick **Hide** on the Videos tab, or tap **Remove** in the app, to take a video out of the app (Remove also moves the file to your Drive bin).
 - The video files are set to "anyone with the link can view" so the app can play them without a Google sign-in. The link is long and random and only goes to that client's app and yours.
-- Keep the app open with the screen on while a video sends. Videos up to 500 MB work; a minute of 1080p phone video is about 100 MB. If the connection drops, the app picks up where it left off.
+- Keep the app open with the screen on while a video sends. The phone sends it straight to your Google Drive, so it goes as fast as your signal allows (if a phone won't allow that, it goes through the sheet instead, which is slower). Videos up to 500 MB work; a minute of 1080p phone video is about 100 MB, and 4K is about 4 times that. If the connection drops, the app picks up where it left off.
 - A video can take a few minutes after sending before Google lets it play.
 - Your free Google Drive has 15 GB, which holds a few hundred short clips. Delete old ones from the ScoutCo videos folder when it gets full.

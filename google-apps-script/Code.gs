@@ -2116,7 +2116,9 @@ function handleVideo_(ss, client, v) {
     var res = UrlFetchApp.fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id", {
       method: "post",
       contentType: "application/json; charset=UTF-8",
-      headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken(), "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(size) },
+      // Origin lets the phone send the pieces straight to Drive (much faster than through this script).
+      headers: { Authorization: "Bearer " + ScriptApp.getOAuthToken(), "X-Upload-Content-Type": mime, "X-Upload-Content-Length": String(size),
+        Origin: APP_URL.replace(/^(https:\/\/[^\/]+).*$/, "$1") },
       payload: JSON.stringify({ name: fileName, mimeType: mime, parents: [videoFolder_().getId()] }),
       muteHttpExceptions: true
     });
@@ -2125,7 +2127,8 @@ function handleVideo_(ss, client, v) {
     job.url = String(url);
     var upload = Utilities.getUuid();
     cache.put("video:" + upload, JSON.stringify(job), 21600);
-    return { ok: true, upload: upload, chunk: VIDEO_CHUNK };
+    // url: only this person's app gets it, and it only works for this one upload.
+    return { ok: true, upload: upload, chunk: VIDEO_CHUNK, url: job.url };
   }
 
   var raw = cache.get("video:" + String(v.upload || ""));

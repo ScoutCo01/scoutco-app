@@ -1501,14 +1501,32 @@
     uploadBar();
     var lock = null;
     try { if (navigator.wakeLock) navigator.wakeLock.request("screen").then(function (l) { lock = l; }, function () {}); } catch (e) { /* not on every phone */ }
-    var upload, chunk;
+    var upload, chunk, direct = "", directWorked = false;
     function progress(next) {
       state.upload.pct = Math.min(99, Math.round(next / size * 100));
       uploadBar();
     }
+    // Fast way: the phone sends each piece straight to Google Drive.
+    // If the phone's browser won't allow that, it falls back to sending through the sheet (slower).
+    function sendDirect(offset) {
+      var end = Math.min(size, offset + chunk);
+      return fetch(direct, { method: "PUT", headers: { "Content-Range": "bytes " + offset + "-" + (end - 1) + "/" + size }, body: file.slice(offset, end) })
+        .then(function (r) {
+          if (r.status === 308) return { ok: true, next: end };
+          if (r.status === 200 || r.status === 201) return videoPost({ op: "status", upload: upload });
+          if (r.status === 404 || r.status === 410) return { error: "That upload timed out. Please try again." };
+          return { error: "Google Drive had a hiccup.", retry: true };
+        }, function () {
+          // Nothing sent yet: this phone can't send straight to Drive, so go through the sheet instead.
+          if (offset === 0 && !directWorked) { direct = ""; return videoPost({ op: "status", upload: upload }); }
+          return { error: "Connection dropped.", retry: true };
+        })
+        .then(function (res) { if (res && res.ok && !res.done && direct) directWorked = true; return res; });
+    }
     function sendFrom(offset, tries) {
-      return readBase64(file.slice(offset, Math.min(size, offset + chunk)))
-        .then(function (data) { return videoPost({ op: "chunk", upload: upload, start: offset, data: data }); })
+      var step = direct ? sendDirect(offset) : readBase64(file.slice(offset, Math.min(size, offset + chunk)))
+        .then(function (data) { return videoPost({ op: "chunk", upload: upload, start: offset, data: data }); });
+      return step
         .then(function (res) {
           if (res && res.done) return res.video;
           if (res && res.ok) { progress(res.next); return sendFrom(res.next, 0); }
@@ -1530,6 +1548,7 @@
       .then(function (res) {
         if (!res || !res.ok) throw new Error((res && res.error) || "Something went wrong.");
         upload = res.upload; chunk = res.chunk || 8 * 1048576;
+        direct = /^https:\/\/www\.googleapis\.com\/upload\//.test(String(res.url || "")) ? res.url : "";
         return sendFrom(0, 0);
       })
       .then(function (video) {
