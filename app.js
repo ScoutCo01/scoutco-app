@@ -2060,7 +2060,7 @@
     return "<div><strong>Your next block starts " + esc(r.start) + "</strong>" +
       (rows.length ? '<dl class="ag-details">' + rows.map(function (x) { return "<dt>" + esc(x[0]) + "</dt><dd>" + esc(x[1]) + "</dd>"; }).join("") + "</dl>" : "") +
       "<div>Everything else stays the same as your ScoutCo agreement. There's nothing you need to do to keep going. " +
-      "If you'd like to stop or change anything, let " + esc(COACH) + " know by " + esc(r.replyBy) + ".</div></div>" +
+      "If you'd like to change anything, let " + esc(COACH) + " know by " + esc(r.replyBy) + ".</div></div>" +
       (withButton ? '<button class="btn primary" data-renew-ok>Got it</button>' : "");
   }
   function renderRenewNote() {
