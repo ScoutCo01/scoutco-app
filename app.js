@@ -25,7 +25,7 @@
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
       view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
-      commDraft: "", commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
+      commDraft: "", commPhoto: null, commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
       upload: null, playing: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "" };
   }
   var state = freshState();
@@ -1228,7 +1228,7 @@
     var waiting = load(KEY_OUTBOX, []).filter(function (x) { return COMM_TYPES[x.type]; });
     commSent.concat(waiting).forEach(function (ev) {
       if (ev.type === "post" && !byId[ev.id]) {
-        var p = { id: ev.id, by: me, at: ev.at, text: ev.text, parent: ev.parent || "", counts: {}, mine: [], pending: isPending(ev.id) };
+        var p = { id: ev.id, by: me, at: ev.at, text: ev.text, photo: ev.photo || "", parent: ev.parent || "", counts: {}, mine: [], pending: isPending(ev.id) };
         posts.push(p); byId[p.id] = p;
       } else if (ev.type === "react" && byId[ev.post]) {
         var q = byId[ev.post], has = q.mine.indexOf(ev.emoji) !== -1;
@@ -1291,7 +1291,9 @@
       '<p class="muted small">Share a win, ask a question or cheer someone on. Everyone training with ScoutCo can see what you post.</p>' +
       '<textarea data-comm-new rows="3" maxlength="2000" placeholder="Share something with the Lift Club…">' + esc(state.commDraft) + "</textarea>" +
       (state.commMsg ? '<p class="error small">' + esc(state.commMsg) + "</p>" : "") +
-      '<div class="comm-compose-row"><button class="btn primary" data-comm-post>Post</button></div>' +
+      commPhotoComposeHtml() +
+      '<div class="comm-compose-row"><button class="btn small ghost" data-comm-photo-add>📷 ' + (state.commPhoto ? "Change photo" : "Add photo") + "</button>" +
+        '<span class="comm-spacer"></span><button class="btn primary" data-comm-post>Post</button></div>' +
     "</section>" + pushCardHtml();
     if (!f.loaded && !f.tops.length) {
       html += state.commErr ? '<p class="empty">' + esc(state.commErr) + "</p>" : '<div class="spinner" aria-label="Loading"></div>';
@@ -1303,7 +1305,8 @@
       var open = state.commReply === p.id;
       return '<article class="card comm-post' + (p.pending ? " pending" : "") + '">' +
         commByline(p, f) +
-        '<p class="comm-text">' + esc(p.text) + "</p>" +
+        (p.text ? '<p class="comm-text">' + esc(p.text) + "</p>" : "") +
+        commPhotoHtml(p.photo) +
         '<div class="comm-actions">' + COMM_REACTIONS.map(function (e) {
           var n = p.counts[e] || 0, on = p.mine.indexOf(e) !== -1;
           return '<button class="comm-react' + (on ? " on" : "") + '" data-comm-react="' + esc(p.id) + '" data-emoji="' + esc(e) + '" aria-pressed="' + on + '">' +
@@ -1325,6 +1328,77 @@
     $("communityPane").innerHTML = html;
     markCommSeen();
   }
+  // ---------- Lift Club photos ----------
+  // A photo uploads (shrunk) as soon as it's picked, so the post itself stays small and can wait in the outbox.
+  var commPhotoLocal = {}; // Drive file id -> the shrunk photo on this phone, shown until Google has it ready
+  function commPhotoSrc(id, size) {
+    id = safeFileId(id);
+    return commPhotoLocal[id] || (id ? "https://drive.google.com/thumbnail?id=" + id + "&sz=w" + (size || 1200) : "");
+  }
+  function commPhotoHtml(id) {
+    if (!safeFileId(id)) return "";
+    return '<button class="comm-photo" data-comm-photo-view="' + esc(id) + '" aria-label="See the full photo">' +
+      '<img src="' + esc(commPhotoSrc(id)) + '" alt="" loading="lazy" onerror="if(!this.dataset.b){this.dataset.b=1;this.src=\'https://lh3.googleusercontent.com/d/' + esc(id) + '=w1200\'}"></button>';
+  }
+  function commPhotoComposeHtml() {
+    var ph = state.commPhoto;
+    if (!ph) return "";
+    return '<div class="comm-photo-draft"><img src="' + esc(ph.preview) + '" alt="Your photo">' +
+      '<button class="comm-photo-x" data-comm-photo-del aria-label="Remove photo">×</button>' +
+      (ph.busy ? '<span class="comm-photo-state">Uploading…</span>' : ph.err ? '<span class="comm-photo-state err">' + esc(ph.err) + "</span>" : "") + "</div>";
+  }
+  function shrinkForPost(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight, scale = Math.min(1, 1600 / Math.max(w, h));
+        if (!w || !h) { reject(new Error("bad image")); return; }
+        var c = document.createElement("canvas");
+        c.width = Math.round(w * scale); c.height = Math.round(h * scale);
+        var ctx = c.getContext("2d");
+        ctx.fillStyle = "#1d1a24"; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("bad image")); };
+      img.src = url;
+    });
+  }
+  function pickCommPhoto() {
+    if (!canSend()) { state.commMsg = "Photos work once you open the app with your own code."; render(); return; }
+    var input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*"; input.style.display = "none";
+    input.addEventListener("change", function () {
+      var f = input.files && input.files[0];
+      input.remove();
+      if (!f) return;
+      var mine = { busy: true, preview: "", file: "", err: "" };
+      state.commPhoto = mine; state.commMsg = "";
+      shrinkForPost(f).then(function (dataUrl) {
+        mine.preview = dataUrl; render();
+        return videoPost({ op: "photo", mime: "image/jpeg", data: dataUrl.slice(dataUrl.indexOf(",") + 1) }).then(function (res) {
+          if (!res || !res.ok || !safeFileId(res.file)) throw new Error((res && res.error) || "bad");
+          mine.file = res.file; commPhotoLocal[res.file] = dataUrl;
+        });
+      }).catch(function (err) {
+        mine.err = err && err.message === "bad image" ? "That photo couldn't be opened. Try another one." : "Couldn't upload it. Check your signal and try again.";
+      }).then(function () { mine.busy = false; if (state.commPhoto === mine) render(); });
+      render();
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+  function showPhoto(id) {
+    var el = document.createElement("div");
+    el.className = "photo-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "Photo");
+    el.innerHTML = '<img src="' + esc(commPhotoSrc(id, 2000)) + '" alt=""><button class="photo-pop-x" aria-label="Close">×</button>';
+    el.addEventListener("click", function () { el.remove(); });
+    document.body.appendChild(el);
+  }
+
   function commSend(ev) {
     if (!canSend()) { state.commMsg = "Posting works once you open the app with your own code."; render(); return false; }
     ev.at = Date.now();
@@ -2065,10 +2139,18 @@
     var b;
     if (e.target.closest("[data-comm-post]")) {
       var text = state.commDraft.trim();
-      if (!text) { state.commMsg = "Type something first."; render(); return; }
-      if (commSend({ type: "post", text: text.slice(0, 2000) })) { state.commDraft = ""; state.commMsg = ""; render(); }
+      var ph = state.commPhoto;
+      if (ph && ph.busy) { state.commMsg = "Wait for your photo to finish uploading."; render(); return; }
+      if (ph && !ph.file) { state.commMsg = "Your photo didn't upload. Remove it or try again."; render(); return; }
+      if (!text && !ph) { state.commMsg = "Type something or add a photo first."; render(); return; }
+      var ev = { type: "post", text: text.slice(0, 2000) };
+      if (ph) ev.photo = ph.file;
+      if (commSend(ev)) { state.commDraft = ""; state.commMsg = ""; state.commPhoto = null; render(); }
       return;
     }
+    if (e.target.closest("[data-comm-photo-add]")) { pickCommPhoto(); return; }
+    if (e.target.closest("[data-comm-photo-del]")) { state.commPhoto = null; state.commMsg = ""; render(); return; }
+    if ((b = e.target.closest("[data-comm-photo-view]"))) { showPhoto(b.getAttribute("data-comm-photo-view")); return; }
     if ((b = e.target.closest("[data-comm-react]"))) {
       var id = b.getAttribute("data-comm-react"), emoji = b.getAttribute("data-emoji");
       var p = commFeed().tops.filter(function (x) { return x.id === id; })[0];

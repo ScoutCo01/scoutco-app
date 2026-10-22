@@ -1729,16 +1729,27 @@ function clientProfiles_(ss) {
 /* ------------------------------------------------------------------ */
 
 var COMMUNITY_TAB = "Lift Club Community";
-var COMMUNITY_HEADERS = ["Posted", "From", "Post", "Replying to", "Hide", "Reactions", "ID", "Reply to ID", "Reaction data", "Code"];
+var COMMUNITY_HEADERS = ["Posted", "From", "Post", "Replying to", "Hide", "Reactions", "ID", "Reply to ID", "Reaction data", "Code", "Photo"];
 var COMMUNITY_REACTIONS = ["💪", "🔥", "👏", "❤️"];
 var COMMUNITY_SHOW = 60; // newest posts sent to the app (each with all its replies)
 // [column, 1-based]. The tab is created with these, in this order.
-var CC = { at: 1, from: 2, text: 3, replyTo: 4, hide: 5, reactions: 6, id: 7, parent: 8, data: 9, code: 10 };
+var CC = { at: 1, from: 2, text: 3, replyTo: 4, hide: 5, reactions: 6, id: 7, parent: 8, data: 9, code: 10, photo: 11 };
+var COMMUNITY_PHOTO_FOLDER = "ScoutCo Lift Club photos";
+var COMMUNITY_PHOTO_MAX = 4 * 1024 * 1024; // the app shrinks photos well under this first
 
 /** The Lift Club Community tab, created the first time it's needed. */
 function communityTab_(ss) {
   var sheet = ss.getSheetByName(COMMUNITY_TAB);
-  if (sheet) return sheet;
+  if (sheet) {
+    // Tabs made before photos came in get the Photo column on the end.
+    if (sheet.getMaxColumns() < CC.photo) sheet.insertColumnsAfter(sheet.getMaxColumns(), CC.photo - sheet.getMaxColumns());
+    if (!String(sheet.getRange(1, CC.photo).getValue()).trim()) {
+      sheet.getRange(1, CC.photo).setValue("Photo");
+      styleHeader_(sheet, CC.photo);
+      sheet.setColumnWidth(CC.photo, 260);
+    }
+    return sheet;
+  }
   sheet = ss.insertSheet(COMMUNITY_TAB);
   sheet.appendRow(COMMUNITY_HEADERS);
   styleHeader_(sheet, COMMUNITY_HEADERS.length);
@@ -1748,6 +1759,7 @@ function communityTab_(ss) {
   sheet.setColumnWidth(CC.replyTo, 220);
   sheet.setColumnWidth(CC.hide, 60);
   sheet.setColumnWidth(CC.reactions, 140);
+  sheet.setColumnWidth(CC.photo, 260);
   sheet.getRange(2, CC.at, sheet.getMaxRows() - 1, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
   sheet.getRange(2, CC.text, sheet.getMaxRows() - 1, 2).setWrap(true);
   sheet.getRange(1, CC.hide).setBackground("#fecaca").setNote("Tick to hide a post (and its replies) from everyone. Untick to bring it back.");
@@ -1791,8 +1803,9 @@ function communityRows_(sheet) {
   return sheet.getRange(2, 1, last - 1, COMMUNITY_HEADERS.length).getValues().map(function (r, i) {
     return { row: i + 2, at: r[CC.at - 1] instanceof Date ? r[CC.at - 1].getTime() : 0, from: text_(r[CC.from - 1]),
       text: text_(r[CC.text - 1]).replace(/^'/, ""), hide: isTicked_(r[CC.hide - 1]), id: text_(r[CC.id - 1]),
-      parent: text_(r[CC.parent - 1]), data: reactionData_(r[CC.data - 1]), code: normalise_(r[CC.code - 1]) };
-  }).filter(function (p) { return p.id && p.text; });
+      parent: text_(r[CC.parent - 1]), data: reactionData_(r[CC.data - 1]), code: normalise_(r[CC.code - 1]),
+      photo: photoId_(r[CC.photo - 1]) };
+  }).filter(function (p) { return p.id && (p.text || p.photo); });
 }
 
 /** What the Lift Club Community tab in the app shows: the newest posts, their replies, and who wrote them. */
@@ -1832,7 +1845,7 @@ function communityFeed_(ss, code) {
       if (who.length) counts[e] = who.length;
       if (who.indexOf(me) !== -1) mine.push(e);
     });
-    return { id: p.id, by: pid, at: p.at, text: p.text, parent: p.parent || "", counts: counts, mine: mine };
+    return { id: p.id, by: pid, at: p.at, text: p.text, photo: p.photo || "", parent: p.parent || "", counts: counts, mine: mine };
   };
   return { me: me, posts: tops.map(item).concat(replies.map(item)), people: people, reactions: COMMUNITY_REACTIONS };
 }
@@ -1865,23 +1878,24 @@ function saveCommunity_(ss, client, events) {
   events.forEach(function (ev) {
     if (ev.type === "post") {
       var id = clip_(ev.id, 40), text = clip_(ev.text, 2000).trim();
-      if (!text || byId[id]) return; // empty, or already saved
+      var photo = ev.photo && !ev.parent ? communityPhotoOk_(ev.photo) : "";
+      if ((!text && !photo) || byId[id]) return; // empty, or already saved
       var parent = byId[clip_(ev.parent, 40)];
       if (ev.parent && (!parent || parent.parent)) parent = null; // replies go on top-level posts only
       if (ev.parent && !parent) return;
       var row = [new Date(), cell_(name), cell_(text), parent ? cell_(parent.from + ": " + clip_(parent.text, 60) + (parent.text.length > 60 ? "…" : "")) : "",
-        false, "", id, parent ? parent.id : "", "{}", code];
+        false, "", id, parent ? parent.id : "", "{}", code, photo ? "https://drive.google.com/file/d/" + photo + "/view" : ""];
       sheet.appendRow(row);
       var at = sheet.getLastRow();
       sheet.getRange(at, CC.hide).insertCheckboxes();
-      byId[id] = { row: at, id: id, text: text, from: name, parent: parent ? parent.id : "", data: {}, code: code };
+      byId[id] = { row: at, id: id, text: text, from: name, parent: parent ? parent.id : "", data: {}, code: code, photo: photo };
       // Who gets a notification: everyone for a new post; for a reply, whoever wrote the post or replied to it.
       var to = null;
       if (parent) {
         to = [parent.code];
         Object.keys(byId).forEach(function (k) { if (byId[k].parent === parent.id) to.push(byId[k].code); });
       }
-      posted.push({ text: text, reply: parent ? parent.from + ": " + clip_(parent.text, 80) : "", to: to });
+      posted.push({ text: text || "📷 Photo", photo: photo, reply: parent ? parent.from + ": " + clip_(parent.text, 80) : "", to: to });
     } else if (ev.type === "react") {
       var p = byId[clip_(ev.post, 40)], e = String(ev.emoji || "");
       if (!p || COMMUNITY_REACTIONS.indexOf(e) === -1) return;
@@ -1906,7 +1920,7 @@ function notifyCommunity_(ss, client, posts) {
   try {
     var to = Session.getEffectiveUser().getEmail();
     if (!to) return;
-    var lines = posts.map(function (p) { return (p.reply ? "Reply to " + p.reply + "\n" : "") + p.text; });
+    var lines = posts.map(function (p) { return (p.reply ? "Reply to " + p.reply + "\n" : "") + p.text + (p.photo ? "\nPhoto: https://drive.google.com/file/d/" + p.photo + "/view" : ""); });
     MailApp.sendEmail(to, "ScoutCo: Lift Club Community post from " + communityName_(client),
       lines.join("\n\n") + "\n\nTo take a post down, tick Hide on the Lift Club Community tab (or tap Hide in your coach app):\n" + ss.getUrl());
   } catch (err) { /* email is a bonus; the post is already saved */ }
@@ -2077,6 +2091,8 @@ function handleVideo_(ss, client, v) {
   if (!v || typeof v !== "object") return { error: "Bad request" };
   var cache = CacheService.getScriptCache();
   var me = normalise_(client.Code);
+
+  if (v.op === "photo") return { ok: true, file: saveCommunityPhoto_(client, v) };
 
   if (v.op === "start") {
     var size = Math.floor(Number(v.size) || 0);
@@ -2267,4 +2283,49 @@ function setupVideos() {
     "You get an email, and the video shows on the Videos tab of your coach app where you can watch it and reply.\n\n" +
     "Every video is saved in the \"" + folder.getName() + "\" folder in your Google Drive and listed on this Videos tab. " +
     "Tick Hide to take one out of the app.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Lift Club photos. The app shrinks a photo, sends it in one go, and  */
+/* it's saved in a "ScoutCo Lift Club photos" folder in your Drive.    */
+/* ------------------------------------------------------------------ */
+
+function photoId_(v) {
+  var m = /[-\w]{20,}/.exec(String(v || "").replace(/^.*\/d\//, ""));
+  return m ? m[0] : "";
+}
+
+function communityPhotoFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("communityPhotoFolder");
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(COMMUNITY_PHOTO_FOLDER);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(COMMUNITY_PHOTO_FOLDER);
+  props.setProperty("communityPhotoFolder", folder.getId());
+  return folder;
+}
+
+/** Saves a photo for a Lift Club post and returns its Drive file id. Everyone in the Lift Club can see it once it's posted. */
+function saveCommunityPhoto_(client, v) {
+  var mime = /^image\/(jpeg|png|webp)$/.test(String(v.mime || "")) ? String(v.mime) : "image/jpeg";
+  var bytes = Utilities.base64Decode(String(v.data || ""));
+  if (!bytes.length || bytes.length > COMMUNITY_PHOTO_MAX) throw new Error("That photo is too big.");
+  var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HHmm");
+  var file = communityPhotoFolder_().createFile(Utilities.newBlob(bytes, mime, communityName_(client) + " - " + stamp + "." + mime.split("/")[1]));
+  // "Anyone with the link" so the app can show it without a Google sign-in.
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return file.getId();
+}
+
+/** Only photos sent through the app (so they're in the Lift Club photos folder) can go on a post. */
+function communityPhotoOk_(id) {
+  id = photoId_(id);
+  if (!id) return "";
+  return safely_(function () {
+    var want = communityPhotoFolder_().getId(), parents = DriveApp.getFileById(id).getParents();
+    while (parents.hasNext()) if (parents.next().getId() === want) return id;
+    return "";
+  }, "");
 }

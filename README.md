@@ -197,6 +197,7 @@ Every client and coach has a **Lift Club Community** tab in their app. They can 
 
 - Turn it on: ScoutCo menu → **Set up Lift Club Community** (the tab is also made by itself the first time someone posts).
 - Every post and reply lands on the **Lift Club Community** tab of the sheet, and you get an email when a client posts.
+- Anyone can add a photo to a post (📷 **Add photo**). The app shrinks it first. Photos are saved in a **ScoutCo Lift Club photos** folder in your Google Drive, with a link in the **Photo** column. Hiding a post hides its photo too. (Photos need the same Drive permission as videos: ScoutCo menu → **Set up videos**.)
 - To take a post down, tick its **Hide** box (untick to bring it back), tap **Hide** on the post in your coach app, or delete the row. Hiding a post hides its replies too.
 - Clients can delete their own posts. Those rows stay on the sheet with "(deleted it)" after their name.
 - The app shows the newest 60 posts.
