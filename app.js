@@ -1413,6 +1413,7 @@
   // Replies and removals are small, so they go through the outbox like everything else.
   var VIDEO_LIFTS = ["Back squat", "Deadlift", "Bench press"];
   var VIDEO_MAX_MB = 500;
+  var TRIM_TIP = "✂️ Trim your video to just the set before you send it. Shorter videos send faster and save space.";
   var videoJustSent = []; // uploaded, but not in a fresh copy of the program yet
   var videoDone = { hide: {}, reply: {} }; // removed or replied to on this phone (kept until the sheet shows it too)
   function videoSeenStore() { var s = load(KEY_VIDEOS_SEEN, null); return s && s.code === state.code ? s : { code: state.code, seen: {} }; }
@@ -1658,6 +1659,7 @@
         }).join("") + "</select>" +
         '<label class="ci-label" for="vid-note">Note for ' + esc(COACH) + ' <span class="muted">(optional)</span></label>' +
         '<textarea id="vid-note" class="ci-input" data-vid-note="1" rows="2" maxlength="1000" placeholder="e.g. 60 kg, felt my hips shoot up">' + esc(state.vidNote || "") + "</textarea>" +
+        '<p class="vid-tip">' + esc(TRIM_TIP) + "</p>" +
         '<div class="comm-compose-row"><button class="btn primary" data-vid-pick>🎥 Choose video and send</button></div>' +
         "</section>";
       html += list.length ? list.map(videoCardHtml).join("") : '<p class="empty">No videos yet.</p>';
@@ -2006,7 +2008,8 @@
     // The main lifts are taught in person, not from videos.
     var book = safeUrl(CONFIG.techniqueBookingUrl);
     if (!sw && !isCoach() && liftOf(ex.name)) {
-      swapLine += '<div class="ex-formvid"><button class="swap-btn" data-formvid="' + esc(key) + '">🎥 Send ' + esc(COACH) + " a form video</button></div>";
+      swapLine += '<div class="ex-formvid"><button class="swap-btn" data-formvid="' + esc(key) + '">🎥 Send ' + esc(COACH) + " a form video</button>" +
+        '<p class="vid-tip">' + esc(TRIM_TIP) + "</p></div>";
     }
     if (ex.locked && !sw && !isCoach()) {
       swapLine += '<div class="ex-technique">Not confident on your form? ' +
