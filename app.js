@@ -605,7 +605,7 @@
     var el = $("bookCall"), url = bookingUrl(), show = false, asked = isOnline() && !!url && callAsked();
     if (asked) {
       el.classList.remove("hidden");
-      el.innerHTML = "<div><strong>" + esc(COACH) + " would like a call</strong>" +
+      el.innerHTML = "<div><strong>Coach would like a call</strong>" +
         "<div>Book a check-in call with " + esc(COACH) + " at a time that suits you.</div></div>" +
         '<a class="btn primary" href="' + esc(url) + '" target="_blank" rel="noopener">Book a check-in call</a>';
       return;

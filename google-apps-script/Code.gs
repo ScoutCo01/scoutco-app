@@ -2098,7 +2098,7 @@ function onCheckinEdit(e) {
     var code = String(row[11]).split("|")[0];
     if (!code) return;
     var res = safely_(function () {
-      return sendPush_(ss, [personId_(code, salt)], "Kirst would like a call", "Tap to book a check-in call with Kirst.", "checkin", url);
+      return sendPush_(ss, [personId_(code, salt)], "Coach would like a call", "Tap to book a check-in call with Kirst.", "checkin", url);
     }, null);
     var ok = res && res.code === 200 && !/invalid_aliases|"errors"/.test(res.body);
     cell.setNote(ok ? "Call link sent " + Utilities.formatDate(new Date(), CHECKIN_TZ, "d/M/yyyy h:mm a")
