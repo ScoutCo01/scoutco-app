@@ -20,6 +20,7 @@
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
   var KEY_AGREE = "scoutco.agreeSigned";
   var KEY_RENEW = "scoutco.renewSeen";
+  var KEY_MSG_REACT = "scoutco.msgReact";
 
   var COACH = String(CONFIG.coachName || "Kirst");
 
@@ -154,7 +155,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW); remove(KEY_MSG_REACT);
     videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
@@ -172,7 +173,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal" || ev.type === "msgreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -1149,7 +1150,9 @@
       return;
     }
     var filled = list.filter(function (c) { return c.at; }).length;
-    $("clientsPane").innerHTML = '<p class="muted small clients-sum">' + filled + " of " + list.length + " clients have filled in their profile.</p>" +
+    var withMsg = list.filter(function (c) { return c.message; }), reacted = withMsg.filter(function (c) { return c.reaction; }).length;
+    $("clientsPane").innerHTML = '<p class="muted small clients-sum">' + filled + " of " + list.length + " clients have filled in their profile." +
+      (withMsg.length ? "<br>" + reacted + " of " + withMsg.length + " have reacted to your message (so they've seen it)." : "") + "</p>" +
       list.map(function (c) {
         var photo = safePhoto(c.photo), age = ageFrom(c.dob), bday = daysToBirthday(c.dob);
         var dob = parseDay(c.dob);
@@ -1169,6 +1172,7 @@
               '<small class="muted">' + esc([c.type, age != null ? age + " yrs" : ""].filter(Boolean).join(" · ")) + "</small></span>" +
             (bday != null && bday <= 7 ? '<span class="bday" title="Birthday soon">🎂 ' + (bday === 0 ? "Today" : bday === 1 ? "Tomorrow" : "in " + bday + " days") + "</span>" : "") +
             (!c.at ? '<span class="pill">Not filled in</span>' : "") +
+            (c.reaction ? '<span class="msg-seen" title="Reacted to your message">' + esc(c.reaction.emoji) + "</span>" : "") +
           "</summary>" +
           '<div class="client-body">' +
             (facts.length ? '<p class="muted small">' + esc(facts.join(" · ")) + "</p>" : "") +
@@ -1179,6 +1183,8 @@
                 (b.at ? esc(new Date(+b.at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })) : "") + "</small></li>";
             }).join("") + "</ul>" : "") +
             (!c.at ? '<p class="muted small">They haven\'t filled in their profile yet.</p>' : "") +
+            (c.message ? "<h4>Your message</h4><p class=\"coach-card-text\">" + esc(c.message) + "</p>" +
+              '<p class="muted small">' + (c.reaction ? "Reacted " + esc(c.reaction.emoji) + (c.reaction.at ? " on " + esc(c.reaction.at) : "") : "No reaction yet") + "</p>" : "") +
           "</div>" +
         "</details>";
       }).join("");
@@ -2076,6 +2082,39 @@
     render();
   }
 
+  // ---------- coach message reactions ----------
+  // Clients tap one to show Kirst they've seen her message. It saves to the Clients tab,
+  // and clears by itself when she writes a new message.
+  var MSG_REACTIONS = ["👍", "❤️", "💪", "🔥", "🙌"];
+  function msgReactions() {
+    var r = state.data && state.data.client && state.data.client.reactions;
+    return r && r.length ? r : MSG_REACTIONS;
+  }
+  // Their pick for the message showing now: what they tapped on this phone, else what the sheet has.
+  function myMsgReaction() {
+    var c = (state.data && state.data.client) || {}, msg = String(c.message || "").trim();
+    var s = load(KEY_MSG_REACT, null);
+    if (s && s.code === state.code && s.msg === msg) return s.emoji || "";
+    return (c.reaction && c.reaction.emoji) || "";
+  }
+  function msgReactHtml() {
+    var mine = myMsgReaction();
+    return '<div class="msg-react" role="group" aria-label="React to this message">' +
+      msgReactions().map(function (e) {
+        var on = e === mine;
+        return '<button class="comm-react' + (on ? " on" : "") + '" data-msg-react="' + esc(e) + '" aria-pressed="' + on + '">' + esc(e) + "</button>";
+      }).join("") +
+      '<span class="msg-react-hint">' + (mine ? "Seen ✓" : "Tap to let " + esc(COACH) + " know you've seen it") + "</span></div>";
+  }
+  function reactToMessage(emoji) {
+    var msg = String((state.data && state.data.client && state.data.client.message) || "").trim();
+    if (!msg) return;
+    var next = myMsgReaction() === emoji ? "" : emoji; // tap your pick again to take it off
+    save(KEY_MSG_REACT, { code: state.code, msg: msg, emoji: next });
+    queue({ type: "msgreact", key: "msg", emoji: next, msg: msg });
+    render();
+  }
+
   // ---------- rendering ----------
   function render() {
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
@@ -2153,7 +2192,8 @@
     var note = $("coachNote");
     if (client.message) {
       var cPhoto = isCoach() ? "" : safePhoto(coachInfo().photo);
-      note.innerHTML = (cPhoto ? '<button class="note-photo" data-coach-open aria-label="About ' + esc(COACH) + '"><img src="' + esc(cPhoto) + '" alt=""></button>' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message);
+      note.innerHTML = (cPhoto ? '<button class="note-photo" data-coach-open aria-label="About ' + esc(COACH) + '"><img src="' + esc(cPhoto) + '" alt=""></button>' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message) +
+        (isCoach() ? "" : msgReactHtml());
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");
@@ -2538,6 +2578,10 @@
   $("profilePane").addEventListener("click", function (e) {
     if (e.target.closest("[data-prof-save]")) { saveProfile(); return; }
     if (e.target.closest("[data-prof-photo-del]") && window.confirm("Remove your photo?")) setPhoto("");
+  });
+  $("coachNote").addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-msg-react]");
+    if (b) reactToMessage(b.getAttribute("data-msg-react"));
   });
   $("renewNote").addEventListener("click", function (e) {
     if (e.target.closest("[data-renew-ok]")) renewalOk();

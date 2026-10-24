@@ -7,6 +7,8 @@
  *
  * Sheet tabs it uses:
  *   Clients:  Code | Name | Program | Active | Message | (Link) | Type | Sessions
+ *             Reaction | Reacted on | Reacted to: filled in when a client reacts to their Message in the app.
+ *             Change someone's Message and their reaction clears, ready for the new one
  *   Blocks:   Program | Block | Start date   (optional: lets the app open on the current week)
  *   Progress: filled in by the app when clients tick exercises (Home swap column: what they did instead at home)
  *   Feedback: filled in by the app when clients send session comments (you also get an email)
@@ -53,6 +55,9 @@ var BOOKING_SETTING = "Check-in call booking link";
 var BOOKING_DEFAULT = "https://scoutcobooking.as.me/?appointmentType=99612561"; // Online Coaching: Call
 
 var CLIENT_HEADERS = ["Code", "Name", "Program", "Active", "Message"];
+// Clients react to their coach message with one of these. Their pick goes on the Clients tab.
+var MESSAGE_REACTIONS = ["👍", "❤️", "💪", "🔥", "🙌"];
+var REACTION_HEADERS = ["Reaction", "Reacted on", "Reacted to"];
 var PROGRAM_HEADERS = ["Program", "Block", "Week", "Day", "Order", "Exercise", "Sets", "Reps", "Load", "Tempo", "Rest", "Notes", "Video"];
 
 /** Called by the app: ?code=SC-XXXXXX */
@@ -87,7 +92,8 @@ function doGet(e) {
   }
 
   return json_({
-    client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
+    client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || ""),
+      reaction: reactionFor_(client), reactions: MESSAGE_REACTIONS },
     program: { name: programName, blocks: blocks },
     weights: weightsFor_(ss, code),
     ticks: ticksFor_(ss, code),
@@ -286,6 +292,7 @@ function saveTodo_(todo, ev) {
  * Added date when you type a task, and the Done on date when you tick one.
  */
 function onEdit(e) {
+  try { clearReactionsOnEdit_(e); } catch (err) { /* never stop an edit */ }
   try {
     var sheet = e && e.range && e.range.getSheet();
     if (!sheet || sheet.getName() !== TODO_TAB) return;
@@ -457,6 +464,8 @@ function doPost(e) {
         if (!isCoach_(client.Type)) saveRenewalSeen_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
+      } else if (ev.type === "msgreact") {
+        if (!isCoach_(client.Type)) saveMessageReaction_(ss, client, ev);
       } else if (ev.type === "videoreply" || ev.type === "videohide") {
         var vr = saveVideoEvent_(ss, client, ev);
         if (vr) replies.push(vr);
@@ -677,6 +686,8 @@ function onOpen() {
     .addItem("Turn off Monday email", "turnOffWeeklyEmail")
     .addToUi();
   try { formatDates_(); } catch (err) { /* not essential */ }
+  // Reaction | Reacted on | Reacted to columns on Clients, so you can see who has seen their message.
+  try { reactionCols_(SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CLIENTS_TAB), true); } catch (err) { /* not essential */ }
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
   // New exercises on Programs get a suggested home swap (only once the Home swaps tab is set up).
   try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss.getSheetByName(SWAPS_TAB)) syncHomeSwaps_(ss); } catch (err) { /* not essential */ }
@@ -1734,7 +1745,8 @@ function clientProfiles_(ss) {
     var p = profiles[code] || {};
     var row = { name: String(c.Name || ""), type: String(c.Type || ""), photo: p.photo || "", dob: p.dob || "",
       squat: p.squat || "", deadlift: p.deadlift || "", bench: p.bench || "", goals: p.goals || "", hobbies: p.hobbies || "", food: p.food || "",
-      at: p.at || (p.dob || p.goals || p.photo ? 1 : 0), pbs: [], vid: salt ? personId_(code, salt) : "" };
+      at: p.at || (p.dob || p.goals || p.photo ? 1 : 0), pbs: [], vid: salt ? personId_(code, salt) : "",
+      message: String(c.Message || "").trim(), reaction: reactionFor_(c) };
     byCode[code] = row;
     out.push(row);
   });
@@ -2720,4 +2732,78 @@ function renewalsDue_(ss) {
     }
   }
   return out.sort(function (a, b) { return a.start - b.start; });
+}
+
+/* ------------------------------------------------------------------ */
+/* Coach message reactions: clients tap 👍 ❤️ 💪 🔥 🙌 on the message    */
+/* you write for them (Message column on Clients) to show they've seen */
+/* it. Their pick lands in the Reaction | Reacted on | Reacted to       */
+/* columns, and shows on the Clients tab of your coach app.             */
+/* ------------------------------------------------------------------ */
+
+/** This client's reaction to their current Message, or null (none yet, or the message has changed since). */
+function reactionFor_(c) {
+  var emoji = text_(c.Reaction), msg = text_(c.Message);
+  if (!emoji || !msg || text_(c["Reacted to"]) !== msg) return null;
+  return { emoji: emoji, at: text_(c["Reacted on"]) };
+}
+
+/** Where the reaction columns are on the Clients tab (1-based). With add, adds any that are missing at the end. */
+function reactionCols_(sheet, add) {
+  if (!sheet) return null;
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var h = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var out = { code: h.indexOf("code") + 1, message: h.indexOf("message") + 1 };
+  var next = h.length;
+  while (next > 0 && !h[next - 1]) next--; // first column after the last heading
+  REACTION_HEADERS.forEach(function (name, i) {
+    var at = h.indexOf(name.toLowerCase()) + 1;
+    if (!at && add) {
+      at = ++next;
+      if (at > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), at - sheet.getMaxColumns());
+      sheet.getRange(1, at).setValue(name).setFontWeight("bold").setBackground("#ede9fe");
+      if (i === 1 && sheet.getMaxRows() > 1) sheet.getRange(2, at, sheet.getMaxRows() - 1, 1).setNumberFormat("d mmm h:mm am/pm");
+    }
+    out[["emoji", "on", "to"][i]] = at;
+  });
+  return out;
+}
+
+/** A client tapped a reaction on their coach message (emoji "" means they took it off). */
+function saveMessageReaction_(ss, client, ev) {
+  var emoji = String(ev.emoji || "");
+  if (emoji && MESSAGE_REACTIONS.indexOf(emoji) === -1) return;
+  var sheet = ss.getSheetByName(CLIENTS_TAB);
+  var c = reactionCols_(sheet, true);
+  if (!c || !c.code || !c.message) return;
+  var values = sheet.getDataRange().getDisplayValues();
+  var code = normalise_(client.Code);
+  for (var i = 1; i < values.length; i++) {
+    if (normalise_(values[i][c.code - 1]) !== code) continue;
+    var msg = text_(values[i][c.message - 1]);
+    // You've changed the message since they reacted, so this reaction was for the old one.
+    if (!msg || msg !== text_(ev.msg)) return;
+    sheet.getRange(i + 1, c.emoji).setValue(emoji);
+    sheet.getRange(i + 1, c.on).setValue(emoji ? new Date() : "");
+    sheet.getRange(i + 1, c.to).setValue(emoji ? cell_(msg) : "");
+    return;
+  }
+}
+
+/** When you change someone's Message on the Clients tab, their old reaction clears. */
+function clearReactionsOnEdit_(e) {
+  var sheet = e && e.range && e.range.getSheet();
+  if (!sheet || sheet.getName() !== CLIENTS_TAB) return;
+  var c = reactionCols_(sheet, false);
+  if (!c || !c.message || !c.emoji) return;
+  if (e.range.getColumn() > c.message || e.range.getLastColumn() < c.message) return;
+  var start = Math.max(e.range.getRow(), 2), end = e.range.getLastRow();
+  if (end < start) return;
+  var n = end - start + 1;
+  var msgs = sheet.getRange(start, c.message, n, 1).getDisplayValues();
+  var tos = c.to ? sheet.getRange(start, c.to, n, 1).getDisplayValues() : null;
+  for (var i = 0; i < n; i++) {
+    if (tos && text_(tos[i][0]) === text_(msgs[i][0])) continue; // same message, keep it
+    [c.emoji, c.on, c.to].forEach(function (col) { if (col) sheet.getRange(start + i, col).setValue(""); });
+  }
 }
