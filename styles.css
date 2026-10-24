@@ -540,3 +540,9 @@ button.comm-avatar { cursor: pointer; }
 .ag-tick { width: 40px; height: 40px; border-radius: 50%; background: #064e3b; color: #a7f3d0; display: grid; place-items: center; font-size: 22px; font-weight: 700; flex: 0 0 auto; }
 .ag-more { margin: 12px 0; }
 .ag-more summary { cursor: pointer; color: var(--accent-strong); font-weight: 600; }
+
+/* Check-in tab before Friday */
+.ci-closed { text-align: center; padding: 26px 18px; }
+.ci-closed h2 { margin: 6px 0 8px; }
+.ci-closed p { margin: 0; }
+.ci-closed-icon { font-size: 40px; }

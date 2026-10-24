@@ -101,7 +101,8 @@ It refreshes every time you open the sheet, or any time from **ScoutCo → Updat
 
 Set a client's **Type** on the Clients tab to anything with "Online" in it (for example `Online only`). Their app then gets:
 
-- **Check-in tab: a weekly pulse check.** Sleep, Nutrition, Energy, Soreness and Head noise (anxiety/stress), each scored 1 = bad, 2 = OK, 3 = good, plus optional bodyweight and a "Note for Kirst". A yellow dot shows on the tab until they've done this week's (weeks run Monday to Sunday). They can update it during the week.
+- **Check-in tab: a weekly pulse check.** Sleep, Nutrition, Energy, Soreness and Head noise (anxiety/stress), each scored 1 = bad, 2 = OK, 3 = good, plus optional bodyweight and a "Note for Kirst". It opens on **Friday** and closes at the end of **Sunday**, and they can send it once a week (weeks run Monday to Sunday). Monday to Thursday the tab says "Your check-in will appear here on Friday".
+- **Check-in reminders.** When they open the app on Friday (or Saturday) a pop-up says their check-in is open, and if it's still not done on Sunday they get a "Don't forget your check-in" pop-up. Each shows once. A yellow dot sits on the tab until it's done. With **ScoutCo > Turn on check-in reminders**, clients who turned notifications on also get a phone notification on Friday about 7am and, only if they haven't done it, Sunday about 5pm (Brisbane time).
 - **Your replies in the app.** Check-ins land on the **Check-ins** tab and you get an email for each one. Type your reply in the green **Reply from Kirst** column. It shows at the top of their app as "Reply from Kirst" the next time they open it (for 3 weeks), and under that check-in on their Check-in tab.
 - **Book a check-in call button**, shown in the second-last week of the block they're on (week 3 of a 4-week block). It opens the link on the **Settings** tab next to **Check-in call booking link**. Leave it blank to hide the button.
 

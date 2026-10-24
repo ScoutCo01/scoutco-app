@@ -435,15 +435,12 @@ function doPost(e) {
           var scores = CHECKIN_SCORES.map(function (s) { return score_(ev[s[0]]); });
           var cRow = [new Date(), Utilities.parseDate(weekOf, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd"), cell_(name)]
             .concat(scores, [asText_(clip_(ev.bw, 20).trim()), cell_(clip_(ev.note, 2000).trim())]);
-          var cAt = cKeys.indexOf(cKey);
-          // Columns A to J only, so a reply you've already typed (column K) is kept.
-          if (cAt > 0) {
-            cis.getRange(cAt + 1, 1, 1, cRow.length).setValues([cRow]);
-          } else {
+          // One check-in per week: the first one sent for a week is kept, and any later copy is ignored.
+          if (cKeys.indexOf(cKey) === -1) {
             cis.appendRow(cRow.concat(["", cKey]));
             cKeys.push(cKey);
+            checkins.push({ week: weekOf, scores: scores, bw: clip_(ev.bw, 20).trim(), note: clip_(ev.note, 2000).trim(), updated: false });
           }
-          checkins.push({ week: weekOf, scores: scores, bw: clip_(ev.bw, 20).trim(), note: clip_(ev.note, 2000).trim(), updated: cAt > 0 });
         }
       } else if (ev.type === "todo") {
         if (isCoach_(client.Type)) { // only your own coach profile has a to-do list
@@ -684,6 +681,8 @@ function onOpen() {
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
     .addItem("Turn off Monday email", "turnOffWeeklyEmail")
+    .addItem("Turn on check-in reminders", "turnOnCheckinReminders")
+    .addItem("Turn off check-in reminders", "turnOffCheckinReminders")
     .addToUi();
   try { formatDates_(); } catch (err) { /* not essential */ }
   // Reaction | Reacted on | Reacted to columns on Clients, so you can see who has seen their message.
@@ -2011,6 +2010,74 @@ function pushCommunity_(ss, client, posted) {
     var ids = codes.map(function (c) { return personId_(c, salt); });
     sendPush_(ss, ids, "Lift Club Community", (p.to ? name + " replied: " : name + ": ") + p.text);
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Weekly check-in reminders for online clients (Brisbane time).       */
+/* Friday morning: "your check-in is open". Sunday afternoon: a        */
+/* reminder, only to those who haven't sent this week's check-in.      */
+/* Clients only get these if they turned notifications on in the app.  */
+/* ------------------------------------------------------------------ */
+
+var CHECKIN_TZ = "Australia/Brisbane";
+var CHECKIN_REMINDERS = ["checkinFridayReminder", "checkinSundayReminder"];
+
+/** The Monday of this week in Brisbane, as yyyy-mm-dd (the app keys check-ins the same way). */
+function checkinWeekOf_() {
+  var now = new Date(), day = +Utilities.formatDate(now, CHECKIN_TZ, "u"); // 1 = Monday ... 7 = Sunday
+  return Utilities.formatDate(new Date(now.getTime() - (day - 1) * 864e5), CHECKIN_TZ, "yyyy-MM-dd");
+}
+
+/** Sends the check-in notification to active online clients (onlyMissing: just those who haven't done this week's). */
+function sendCheckinReminders_(onlyMissing) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!setting_(ss, PUSH_APP_SETTING) || !setting_(ss, PUSH_KEY_SETTING)) return 0;
+  var week = checkinWeekOf_(), done = {};
+  if (onlyMissing) {
+    rowsOf_(ss, CHECKINS_TAB, CHECKIN_HEADERS.length).forEach(function (r) { done[String(r[11])] = true; });
+  }
+  var salt = communitySalt_();
+  var ids = readTab_(ss, CLIENTS_TAB).filter(function (c) {
+    var code = normalise_(c.Code);
+    return code && isOnline_(c.Type) && !isOff_(c.Active) && !done[code + "|" + week];
+  }).map(function (c) { return personId_(c.Code, salt); });
+  if (!ids.length) return 0;
+  if (onlyMissing) sendPush_(ss, ids, "Don't forget your check-in", "Your weekly check-in closes tonight. It takes about a minute and Kirst reads every one.", "checkin");
+  else sendPush_(ss, ids, "Your weekly check-in is open", "Tap to tell Kirst how your week went. It takes about a minute.", "checkin");
+  return ids.length;
+}
+
+function checkinFridayReminder() { sendCheckinReminders_(false); }
+function checkinSundayReminder() { sendCheckinReminders_(true); }
+
+/** ScoutCo menu → Turn on check-in reminders. Safe to run again: it never makes two. */
+function turnOnCheckinReminders() {
+  removeCheckinReminders_();
+  ScriptApp.newTrigger("checkinFridayReminder").timeBased()
+    .onWeekDay(ScriptApp.WeekDay.FRIDAY).atHour(7).inTimezone(CHECKIN_TZ).create();
+  ScriptApp.newTrigger("checkinSundayReminder").timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(17).inTimezone(CHECKIN_TZ).create();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  SpreadsheetApp.getUi().alert("Done! Online clients will get a notification:\n\n" +
+    "• Friday about 7am: their weekly check-in is open\n" +
+    "• Sunday about 5pm: a reminder, only if they haven't sent it yet\n\n" +
+    "They also get a pop-up when they open the app on those days." +
+    (setting_(ss, PUSH_APP_SETTING) && setting_(ss, PUSH_KEY_SETTING) ? "" :
+      "\n\nNote: your OneSignal App ID and API key aren't on the Settings tab yet, so only the pop-ups will work until they are."));
+}
+
+/** ScoutCo menu → Turn off check-in reminders (the in-app pop-ups still show). */
+function turnOffCheckinReminders() {
+  var n = removeCheckinReminders_();
+  SpreadsheetApp.getUi().alert(n ? "Check-in notifications are turned off. Clients still see the pop-up in the app." : "Check-in notifications weren't turned on.");
+}
+
+function removeCheckinReminders_() {
+  var n = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (CHECKIN_REMINDERS.indexOf(t.getHandlerFunction()) !== -1) { ScriptApp.deleteTrigger(t); n++; }
+  });
+  return n;
 }
 
 /** ScoutCo menu: adds the two OneSignal rows to the Settings tab. */
