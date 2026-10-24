@@ -396,6 +396,10 @@ input[type="date"].ci-input { min-height: 44px; color-scheme: dark; }
 .note-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .reply-note::after { content: ""; display: block; clear: both; }
 .coach-note::after { content: ""; display: block; clear: both; }
+.msg-react { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; white-space: normal; }
+.msg-react .comm-react { padding: 6px 10px; font-size: 18px; }
+.msg-react-hint { font-size: 12px; color: var(--muted); margin-left: 2px; }
+.msg-seen { font-size: 18px; line-height: 1; margin-left: 4px; }
 
 /* Kirst's Clients tab */
 .clients-sum { margin: 12px 2px 0; }

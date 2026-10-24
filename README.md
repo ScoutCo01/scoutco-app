@@ -34,7 +34,7 @@ To give two clients the same program, put the same name in their **Program** col
 
 To stop a client's access, change **Active** to `No`.
 
-**Message** shows as a "From Kirst" note at the top of that client's app. (The name clients see is set by `coachName` in `config.js`.)
+**Message** shows as a "From Kirst" note at the top of that client's app. (The name clients see is set by `coachName` in `config.js`.) Clients can react to it (👍 ❤️ 💪 🔥 🙌) to show they've seen it. Their pick goes in the **Reaction**, **Reacted on** and **Reacted to** columns on the Clients tab, and shows on the Clients tab of the coach app. Change someone's Message and their old reaction clears.
 
 **Type** (e.g. Online only, Weekly, Fortnightly) and **Sessions** (e.g. Mondays at 7:15 pm) show in a "Your sessions" box at the top of the app. Add these two column headings to the Clients tab if they're not there, in any empty columns.
 
