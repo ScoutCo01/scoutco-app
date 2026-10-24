@@ -546,3 +546,4 @@ button.comm-avatar { cursor: pointer; }
 .ci-closed h2 { margin: 6px 0 8px; }
 .ci-closed p { margin: 0; }
 .ci-closed-icon { font-size: 40px; }
+.ci-call { display: block; text-align: center; margin-top: 10px; }

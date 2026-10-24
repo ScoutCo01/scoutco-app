@@ -431,9 +431,9 @@
     server.forEach(function (c) {
       if (!c || !c.week) return;
       var k = state.code + "|" + c.week, mine = all[k];
-      if (waiting[c.week]) { if (mine) mine.reply = c.reply || ""; return; } // keep their newer answers, but show Kirst's reply
+      if (waiting[c.week]) { if (mine) { mine.reply = c.reply || ""; mine.bookCall = !!c.bookCall; } return; } // keep their newer answers, but show Kirst's reply
       all[k] = { sleep: c.sleep, nutrition: c.nutrition, energy: c.energy, soreness: c.soreness, head: c.head,
-        bw: c.bw || "", note: c.note || "", reply: c.reply || "", at: c.at || (mine && mine.at) || 0 };
+        bw: c.bw || "", note: c.note || "", reply: c.reply || "", bookCall: !!c.bookCall, at: c.at || (mine && mine.at) || 0 };
     });
     save(KEY_CHECKINS, all);
   }
@@ -596,8 +596,20 @@
 
   // "Book a check-in call" shows in the second-last week of the block they're in today
   // (week 3 of a 4-week block), once a booking link is on the Settings tab.
+  // It also shows when Kirst ticks "Send call link" on one of their check-ins from the last 3 weeks.
+  function callAsked() {
+    var cutoff = isoDay(addDays(mondayOf(new Date()), -14));
+    return myCheckins().some(function (c) { return c.bookCall && c.week >= cutoff; });
+  }
   function renderBookCall(blocks) {
-    var el = $("bookCall"), url = bookingUrl(), show = false;
+    var el = $("bookCall"), url = bookingUrl(), show = false, asked = isOnline() && !!url && callAsked();
+    if (asked) {
+      el.classList.remove("hidden");
+      el.innerHTML = "<div><strong>" + esc(COACH) + " would like a call</strong>" +
+        "<div>Book a check-in call with " + esc(COACH) + " at a time that suits you.</div></div>" +
+        '<a class="btn primary" href="' + esc(url) + '" target="_blank" rel="noopener">Book a check-in call</a>';
+      return;
+    }
     if (isOnline() && url) {
       var now = currentByDate(blocks);
       var b = now && blocks.filter(function (x) { return x.name === now.block; })[0];
@@ -680,6 +692,7 @@
       }).join("") + (c.bw ? '<span class="pill">' + esc(c.bw) + "</span>" : "") + "</div>" +
       (c.note ? '<div class="ci-past-note">' + esc(c.note) + "</div>" : "") +
       (c.reply ? '<div class="coach-note"><strong>Reply from ' + esc(COACH) + "</strong>" + esc(c.reply) + "</div>" : "") +
+      (c.bookCall && bookingUrl() ? '<a class="btn primary ci-call" href="' + esc(bookingUrl()) + '" target="_blank" rel="noopener">Book a check-in call with ' + esc(COACH) + "</a>" : "") +
     "</div>";
   }
 

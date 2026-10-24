@@ -46,7 +46,7 @@ var PROGRESS_HEADERS = ["Updated", "Client", "Block", "Week", "Session", "Exerci
 var FEEDBACK_HEADERS = ["Received", "Client", "Block", "Week", "Session", "Comment", "ID"];
 var BLOCK_HEADERS = ["Program", "Block", "Start date"];
 var CHECKINS_TAB = "Check-ins";
-var CHECKIN_HEADERS = ["Updated", "Week of", "Client", "Sleep", "Nutrition", "Energy", "Soreness", "Head noise", "Bodyweight", "Note for Kirst", "Reply from Kirst", "Key"];
+var CHECKIN_HEADERS = ["Updated", "Week of", "Client", "Sleep", "Nutrition", "Energy", "Soreness", "Head noise", "Bodyweight", "Note for Kirst", "Reply from Kirst", "Key", "Send call link"];
 var CHECKIN_SCORES = [["sleep", "Sleep"], ["nutrition", "Nutrition"], ["energy", "Energy"], ["soreness", "Soreness"], ["head", "Head noise"]];
 var TODO_TAB = "To-do";
 var TODO_HEADERS = ["Task", "Done", "Added", "Done on", "ID"];
@@ -166,7 +166,7 @@ function checkinsFor_(ss, code) {
     var key = String(r[11]);
     if (key.indexOf(prefix) !== 0) return;
     var c = { week: key.slice(prefix.length), bw: text_(r[8]).replace(/^'/, ""), note: text_(r[9]), reply: text_(r[10]),
-      at: r[0] instanceof Date ? r[0].getTime() : 0 };
+      bookCall: isTicked_(r[12]), at: r[0] instanceof Date ? r[0].getTime() : 0 };
     CHECKIN_SCORES.forEach(function (s, i) { c[s[0]] = score_(r[3 + i]); });
     out.push(c);
   });
@@ -685,6 +685,8 @@ function onOpen() {
     .addItem("Turn off check-in reminders", "turnOffCheckinReminders")
     .addToUi();
   try { formatDates_(); } catch (err) { /* not essential */ }
+  // The "Send call link" tick boxes on Check-ins (added once).
+  try { callLinkCol_(SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CHECKINS_TAB)); } catch (err) { /* not essential */ }
   // Reaction | Reacted on | Reacted to columns on Clients, so you can see who has seen their message.
   try { reactionCols_(SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CLIENTS_TAB), true); } catch (err) { /* not essential */ }
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
@@ -1360,7 +1362,16 @@ function setupCheckinsTab_(ss) {
   sheet.setColumnWidth(10, 320);
   sheet.setColumnWidth(11, 320);
   sheet.getRange(1, 11).setBackground("#bbf7d0");
+  callLinkCol_(sheet);
   return sheet;
+}
+
+/** Column M on Check-ins: tick "Send call link" and that client gets a Book a check-in call button in their app. */
+function callLinkCol_(sheet) {
+  if (!sheet || (text_(sheet.getRange(1, 13).getValue()) === "Send call link" && sheet.getRange(2, 13).getDataValidation())) return;
+  sheet.getRange(1, 13).setValue("Send call link").setFontWeight("bold").setBackground("#bbf7d0");
+  sheet.getRange(2, 13, Math.max(sheet.getMaxRows() - 1, 1), 1).insertCheckboxes();
+  sheet.setColumnWidth(13, 120);
 }
 
 /** The Settings tab: one setting per row (Setting | Value). */
@@ -1983,7 +1994,7 @@ var PUSH_KEY_SETTING = "OneSignal API key";
 var APP_URL = "https://scoutco01.github.io/scoutco-app/";
 
 /** Sends a notification through OneSignal to these people (personId_ values). Tapping it opens that tab of the app. Returns OneSignal's reply. */
-function sendPush_(ss, ids, title, message, view) {
+function sendPush_(ss, ids, title, message, view, url) {
   var appId = setting_(ss, PUSH_APP_SETTING), key = setting_(ss, PUSH_KEY_SETTING);
   if (!appId || !key || !ids.length) return null;
   var res = UrlFetchApp.fetch("https://api.onesignal.com/notifications?c=push", {
@@ -1992,7 +2003,7 @@ function sendPush_(ss, ids, title, message, view) {
     headers: { Authorization: (/^(Key|Basic) /.test(key) ? "" : "Key ") + key },
     payload: JSON.stringify({
       app_id: appId, target_channel: "push", include_aliases: { external_id: ids },
-      headings: { en: title }, contents: { en: clip_(message, 180) }, url: APP_URL + "?view=" + (view || "community")
+      headings: { en: title }, contents: { en: clip_(message, 180) }, url: url || APP_URL + "?view=" + (view || "community")
     }),
     muteHttpExceptions: true
   });
@@ -2020,7 +2031,7 @@ function pushCommunity_(ss, client, posted) {
 /* ------------------------------------------------------------------ */
 
 var CHECKIN_TZ = "Australia/Brisbane";
-var CHECKIN_REMINDERS = ["checkinFridayReminder", "checkinSundayReminder"];
+var CHECKIN_REMINDERS = ["checkinFridayReminder", "checkinSundayReminder", "onCheckinEdit"];
 
 /** The Monday of this week in Brisbane, as yyyy-mm-dd (the app keys check-ins the same way). */
 function checkinWeekOf_() {
@@ -2058,18 +2069,47 @@ function turnOnCheckinReminders() {
   ScriptApp.newTrigger("checkinSundayReminder").timeBased()
     .onWeekDay(ScriptApp.WeekDay.SUNDAY).atHour(17).inTimezone(CHECKIN_TZ).create();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  ScriptApp.newTrigger("onCheckinEdit").forSpreadsheet(ss).onEdit().create();
+  setupCheckinsTab_(ss);
   SpreadsheetApp.getUi().alert("Done! Online clients will get a notification:\n\n" +
     "• Friday about 7am: their weekly check-in is open\n" +
     "• Sunday about 5pm: a reminder, only if they haven't sent it yet\n\n" +
-    "They also get a pop-up when they open the app on those days." +
+    "They also get a pop-up when they open the app on those days.\n\n" +
+    "To ask someone to book a call, tick \"Send call link\" on their row of the Check-ins tab. They get a notification that opens your booking link, and a Book a check-in call button in their app." +
     (setting_(ss, PUSH_APP_SETTING) && setting_(ss, PUSH_KEY_SETTING) ? "" :
       "\n\nNote: your OneSignal App ID and API key aren't on the Settings tab yet, so only the pop-ups will work until they are."));
+}
+
+/**
+ * Runs when you edit the sheet (switched on by Turn on check-in reminders).
+ * Ticking "Send call link" on the Check-ins tab sends that client a notification
+ * that opens your booking link. The tick box gets a note saying when it was sent.
+ */
+function onCheckinEdit(e) {
+  var r = e && e.range, sheet = r && r.getSheet();
+  if (!sheet || sheet.getName() !== CHECKINS_TAB || r.getLastColumn() < 13 || r.getColumn() > 13 || r.getLastRow() < 2) return;
+  var ss = sheet.getParent(), url = setting_(ss, BOOKING_SETTING) || BOOKING_DEFAULT, salt = communitySalt_();
+  var first = Math.max(r.getRow(), 2), n = r.getLastRow() - first + 1;
+  var rows = sheet.getRange(first, 1, n, 13).getValues();
+  rows.forEach(function (row, i) {
+    var cell = sheet.getRange(first + i, 13);
+    if (!isTicked_(row[12])) { if (cell.getNote()) cell.clearNote(); return; } // untick and tick again to resend
+    if (cell.getNote()) return; // already sent for this tick
+    var code = String(row[11]).split("|")[0];
+    if (!code) return;
+    var res = safely_(function () {
+      return sendPush_(ss, [personId_(code, salt)], "Kirst would like a call", "Tap to book a check-in call with Kirst.", "checkin", url);
+    }, null);
+    var ok = res && res.code === 200 && !/invalid_aliases|"errors"/.test(res.body);
+    cell.setNote(ok ? "Call link sent " + Utilities.formatDate(new Date(), CHECKIN_TZ, "d/M/yyyy h:mm a")
+      : "Notification not sent (their notifications may be off). The Book a check-in call button still shows in their app.");
+  });
 }
 
 /** ScoutCo menu → Turn off check-in reminders (the in-app pop-ups still show). */
 function turnOffCheckinReminders() {
   var n = removeCheckinReminders_();
-  SpreadsheetApp.getUi().alert(n ? "Check-in notifications are turned off. Clients still see the pop-up in the app." : "Check-in notifications weren't turned on.");
+  SpreadsheetApp.getUi().alert(n ? "Check-in notifications are turned off, including the Send call link notification. Clients still see the pop-ups and the Book a check-in call button in the app." : "Check-in notifications weren't turned on.");
 }
 
 function removeCheckinReminders_() {
