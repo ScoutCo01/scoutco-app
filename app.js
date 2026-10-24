@@ -12,6 +12,7 @@
   var KEY_WEIGHTS = "scoutco.weights";
   var KEY_SWAPS = "scoutco.swaps";
   var KEY_CHECKINS = "scoutco.checkins";
+  var KEY_CI_POP = "scoutco.checkinPop"; // which check-in pop-ups this phone has shown: { "<code>|<week>|fri": true }
   var KEY_TODOS = "scoutco.todos";
   var KEY_PROFILE = "scoutco.profile";
   var KEY_COMMUNITY = "scoutco.community";
@@ -152,6 +153,35 @@
     render();
     show("programView");
     maybeShowInstall();
+    setTimeout(checkinPop, 900);
+  }
+
+  // Friday (or Saturday): "Your weekly check-in is open". Sunday, if it's still not done: a reminder.
+  // Each one shows once per week on this phone.
+  function checkinPop() {
+    if (!state.code || !checkinDue() || checkinWaiting() || document.querySelector(".ci-pop")) return;
+    if (document.querySelector(".pb-pop")) { setTimeout(checkinPop, 3000); return; } // wait for another pop-up to close
+    var sunday = new Date().getDay() === 0, seen = load(KEY_CI_POP, {});
+    var key = state.code + "|" + thisWeekOf() + "|" + (sunday ? "sun" : "fri");
+    if (seen[key]) return;
+    seen[key] = true;
+    save(KEY_CI_POP, seen);
+    if (state.view === "checkin") return; // they're already on it
+    var el = document.createElement("div");
+    el.className = "pb-pop push-pop ci-pop";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", "Weekly check-in");
+    el.innerHTML = '<div class="coach-pop-card push-pop-card"><div class="push-pop-bell" aria-hidden="true">' + (sunday ? "⏰" : "📋") + "</div>" +
+      "<h2>" + (sunday ? "Don't forget your check-in" : "Your weekly check-in is open") + "</h2>" +
+      '<p class="muted">' + esc(sunday ? "It closes tonight. It only takes a minute and " + COACH + " reads every one."
+        : "Tell " + COACH + " how your week went. It takes about a minute and it's open until Sunday night.") + "</p>" +
+      '<button class="btn primary" data-ci-go>Do it now</button><button class="btn ghost" data-ci-later>Later</button></div>';
+    document.body.appendChild(el);
+    el.addEventListener("click", function (e) {
+      if (e.target.closest("[data-ci-go]")) { el.remove(); state.view = "checkin"; render(); window.scrollTo(0, 0); }
+      else if (e.target === el || e.target.closest("[data-ci-later]")) el.remove();
+    });
   }
 
   function signOut(message) {
@@ -370,6 +400,10 @@
   function mondayOf(d) { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return addDays(x, -((x.getDay() + 6) % 7)); }
   function isoDay(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
   function thisWeekOf() { return isoDay(mondayOf(new Date())); }
+  // The weekly check-in opens on Friday and closes at the end of Sunday (one per Monday-to-Sunday week).
+  function checkinOpen() { var d = new Date().getDay(); return d === 5 || d === 6 || d === 0; }
+  function checkinWaiting() { return load(KEY_OUTBOX, []).some(function (x) { return x.type === "checkin" && x.key === thisWeekOf(); }); }
+  function checkinDue() { return isOnline() && !isCoach() && checkinOpen() && !checkinFor(thisWeekOf()); }
 
   // ---------- weekly pulse check ----------
   var SCORES = [
@@ -397,9 +431,9 @@
     server.forEach(function (c) {
       if (!c || !c.week) return;
       var k = state.code + "|" + c.week, mine = all[k];
-      if (waiting[c.week]) { if (mine) mine.reply = c.reply || ""; return; } // keep their newer answers, but show Kirst's reply
+      if (waiting[c.week]) { if (mine) { mine.reply = c.reply || ""; mine.bookCall = !!c.bookCall; } return; } // keep their newer answers, but show Kirst's reply
       all[k] = { sleep: c.sleep, nutrition: c.nutrition, energy: c.energy, soreness: c.soreness, head: c.head,
-        bw: c.bw || "", note: c.note || "", reply: c.reply || "", at: c.at || (mine && mine.at) || 0 };
+        bw: c.bw || "", note: c.note || "", reply: c.reply || "", bookCall: !!c.bookCall, at: c.at || (mine && mine.at) || 0 };
     });
     save(KEY_CHECKINS, all);
   }
@@ -509,7 +543,7 @@
   function renderViewTabs() {
     var views = viewList();
     if (!views.some(function (v) { return v[0] === state.view; })) state.view = "program";
-    var due = isOnline() && !checkinFor(thisWeekOf());
+    var due = checkinDue();
     var profDue = profileNeedsFilling();
     var commDot = state.view !== "community" && commUnread();
     var openTodos = isCoach() ? getTodos().filter(function (t) { return !t.done; }).length : 0;
@@ -562,8 +596,20 @@
 
   // "Book a check-in call" shows in the second-last week of the block they're in today
   // (week 3 of a 4-week block), once a booking link is on the Settings tab.
+  // It also shows when Kirst ticks "Send call link" on one of their check-ins from the last 3 weeks.
+  function callAsked() {
+    var cutoff = isoDay(addDays(mondayOf(new Date()), -14));
+    return myCheckins().some(function (c) { return c.bookCall && c.week >= cutoff; });
+  }
   function renderBookCall(blocks) {
-    var el = $("bookCall"), url = bookingUrl(), show = false;
+    var el = $("bookCall"), url = bookingUrl(), show = false, asked = isOnline() && !!url && callAsked();
+    if (asked) {
+      el.classList.remove("hidden");
+      el.innerHTML = "<div><strong>Coach would like a call</strong>" +
+        "<div>Book a check-in call with " + esc(COACH) + " at a time that suits you.</div></div>" +
+        '<a class="btn primary" href="' + esc(url) + '" target="_blank" rel="noopener">Book a check-in call</a>';
+      return;
+    }
     if (isOnline() && url) {
       var now = currentByDate(blocks);
       var b = now && blocks.filter(function (x) { return x.name === now.block; })[0];
@@ -582,12 +628,36 @@
   function renderCheckin() {
     var week = thisWeekOf();
     var saved = checkinFor(week);
+    var history = myCheckins().filter(function (c) { return c.week !== week; }).slice(0, 8);
+    var earlier = history.length ? '<h3 class="section-title">Earlier check-ins</h3>' + history.map(historyHtml).join("") : "";
+
+    // Already sent this week: show what they sent. It can only be sent once a week.
+    if (saved) {
+      var when = checkinWaiting() ? "Sending…" : "Sent ✓ " + new Date(saved.at || Date.now()).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" });
+      $("checkinPane").innerHTML =
+        '<section class="card ci">' +
+          '<h2>Check-in done for this week 🙌</h2>' +
+          '<p class="muted small">Thanks! ' + esc(COACH) + " reads every one. Your next check-in opens on Friday.</p>" +
+          historyHtml(Object.assign({ week: week }, saved), when) +
+        "</section>" + earlier;
+      return;
+    }
+
+    // Monday to Thursday: nothing to fill in yet.
+    if (!checkinOpen()) {
+      $("checkinPane").innerHTML =
+        '<section class="card ci ci-closed">' +
+          '<div class="ci-closed-icon" aria-hidden="true">⏳</div>' +
+          "<h2>Your check-in will appear here on Friday</h2>" +
+          '<p class="muted small">Once a week, from Friday to Sunday, you\'ll tell ' + esc(COACH) + " how your week went. It takes about a minute.</p>" +
+        "</section>" + earlier;
+      return;
+    }
+
     if (!state.ci || state.ci.week !== week) {
-      state.ci = Object.assign({ week: week }, saved || {});
-      state.ci.error = "";
+      state.ci = { week: week, error: "" };
     }
     var d = state.ci;
-    var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "checkin" && x.key === week; });
     var rows = SCORES.map(function (sc) {
       return '<div class="ci-row"><div class="ci-name">' + esc(sc.name) +
         (sc.hint ? '<small>' + esc(sc.hint) + "</small>" : "") + '</div><div class="ci-scale" role="radiogroup" aria-label="' + esc(sc.name) + '">' +
@@ -596,34 +666,33 @@
             '" aria-checked="' + (+d[sc.id] === n) + '"><b>' + n + "</b>" + SCORE_WORDS[n] + "</button>";
         }).join("") + "</div></div>";
     }).join("");
-    var status = saved ? (pending ? "Sending…" : "Sent ✓ " + new Date(saved.at || Date.now()).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })) : "";
-    var history = myCheckins().filter(function (c) { return c.week !== week; }).slice(0, 8);
+    var closes = new Date().getDay() === 0 ? "It closes tonight." : "It's open until Sunday night.";
 
     $("checkinPane").innerHTML =
       '<section class="card ci">' +
         '<h2>Weekly pulse check</h2>' +
-        '<p class="muted small">This ' + esc(weekLabel(week)) + '. Tap 1 for bad, 2 for OK or 3 for good. ' + esc(COACH) + " reads every one.</p>" +
+        '<p class="muted small">This ' + esc(weekLabel(week)) + '. Tap 1 for bad, 2 for OK or 3 for good. ' + esc(COACH) + " reads every one. " + esc(closes) + "</p>" +
         rows +
         '<label class="ci-label" for="ci-bw">Bodyweight <span class="muted">(optional)</span></label>' +
         '<input id="ci-bw" class="ci-input" data-ci="bw" type="text" inputmode="decimal" maxlength="20" autocomplete="off" placeholder="e.g. 72.5 kg" value="' + esc(d.bw || "") + '">' +
         '<label class="ci-label" for="ci-note">Note for ' + esc(COACH) + "</label>" +
         '<textarea id="ci-note" class="ci-input" data-ci="note" rows="3" maxlength="2000" placeholder="Anything ' + esc(COACH) + ' should know this week?">' + esc(d.note || "") + "</textarea>" +
         (d.error ? '<p class="error">' + esc(d.error) + "</p>" : "") +
-        '<div class="ci-actions"><span class="small muted">' + esc(status) + "</span>" +
-          '<button class="btn primary" data-ci-send>' + (saved ? "Update check-in" : "Send check-in") + "</button></div>" +
-        (saved && saved.reply ? '<div class="coach-note"><strong>Reply from ' + esc(COACH) + "</strong>" + esc(saved.reply) + "</div>" : "") +
-      "</section>" +
-      (history.length ? '<h3 class="section-title">Earlier check-ins</h3>' + history.map(historyHtml).join("") : "");
+        '<div class="ci-actions"><span class="small muted">You can send it once a week, so check your answers first.</span>' +
+          '<button class="btn primary" data-ci-send>Send check-in</button></div>' +
+      "</section>" + earlier;
   }
 
-  function historyHtml(c) {
-    return '<div class="card ci-past"><div class="ci-past-head">' + esc(weekLabel(c.week).replace(/^w/, "W")) + "</div>" +
+  function historyHtml(c, status) {
+    return '<div class="card ci-past"><div class="ci-past-head">' + esc(weekLabel(c.week).replace(/^w/, "W")) +
+      (status ? ' <span class="small muted">' + esc(status) + "</span>" : "") + "</div>" +
       '<div class="ci-pills">' + SCORES.map(function (sc) {
         var v = +c[sc.id];
         return '<span class="pill s' + (v || 0) + '">' + esc(sc.name) + " " + (v || "–") + "</span>";
       }).join("") + (c.bw ? '<span class="pill">' + esc(c.bw) + "</span>" : "") + "</div>" +
       (c.note ? '<div class="ci-past-note">' + esc(c.note) + "</div>" : "") +
       (c.reply ? '<div class="coach-note"><strong>Reply from ' + esc(COACH) + "</strong>" + esc(c.reply) + "</div>" : "") +
+      (c.bookCall && bookingUrl() ? '<a class="btn primary ci-call" href="' + esc(bookingUrl()) + '" target="_blank" rel="noopener">Book a check-in call with ' + esc(COACH) + "</a>" : "") +
     "</div>";
   }
 
@@ -636,6 +705,7 @@
       return;
     }
     d.error = "";
+    if (!checkinOpen() || d.week !== thisWeekOf() || checkinFor(d.week)) { state.ci = null; render(); return; } // once a week, Friday to Sunday
     var all = getCheckins(), k = state.code + "|" + d.week, old = all[k] || {};
     var entry = { bw: String(d.bw || "").trim().slice(0, 20), note: String(d.note || "").trim().slice(0, 2000), reply: old.reply || "", at: Date.now() };
     SCORES.forEach(function (sc) { entry[sc.id] = +d[sc.id]; });
@@ -1765,8 +1835,9 @@
     el.setAttribute("aria-modal", "true");
     el.setAttribute("aria-label", "Lift Club notifications");
     el.innerHTML = '<div class="coach-pop-card push-pop-card"><div class="push-pop-bell" aria-hidden="true">🔔</div>' +
-      "<h2>Get notified when someone posts in the Lift Club?</h2>" +
-      '<p class="muted">You\'ll get a notification for new posts and replies to yours. You can turn it off any time on your Profile tab.</p>' +
+      "<h2>" + (isOnline() ? "Get notified about your check-in and the Lift Club?" : "Get notified when someone posts in the Lift Club?") + "</h2>" +
+      '<p class="muted">' + (isOnline() ? "You'll get a reminder when your weekly check-in opens on Friday, plus new Lift Club posts and replies to yours."
+        : "You'll get a notification for new posts and replies to yours.") + " You can turn it off any time on your Profile tab.</p>" +
       '<button class="btn primary" data-push-yes>Turn on</button><button class="btn ghost" data-push-no>Not now</button></div>';
     document.body.appendChild(el);
     el.addEventListener("click", function (e) {
@@ -1787,12 +1858,12 @@
     } else if (!push.supported) {
       body = "This browser can't show notifications. Try opening the app from your home screen.";
     } else if (push.on) {
-      body = "Notifications are on. You'll hear about new posts in the Lift Club and replies to your posts.";
+      body = "Notifications are on. You'll hear about new posts in the Lift Club and replies to your posts" + (isOnline() ? ", plus your weekly check-in reminders." : ".");
       btn = '<button class="btn small ghost" data-push-toggle>' + (push.busy ? "…" : "Turn off") + "</button>";
     } else if (window.Notification && Notification.permission === "denied") {
       body = "Notifications are blocked for this app. Turn them on in your phone's settings, then come back here.";
     } else {
-      body = "Get a notification when someone posts in the Lift Club or replies to you.";
+      body = "Get a notification when someone posts in the Lift Club or replies to you" + (isOnline() ? ", and a reminder when your weekly check-in opens." : ".");
       btn = '<button class="btn small primary" data-push-toggle>' + (push.busy ? "…" : "Turn on notifications") + "</button>";
     }
     return '<section class="card push-card"><div><strong>🔔 Notifications</strong><p class="muted small">' + esc(body) + "</p></div>" + btn + "</section>";
@@ -2887,7 +2958,7 @@
   var linkCode = normaliseCode(params.get("code"));
   if (linkCode) save(KEY_CODE, linkCode);
   // Tapping a Lift Club notification opens the app on that tab.
-  if (params.get("view") === "community" || params.get("view") === "videos") state.view = params.get("view");
+  if (params.get("view") === "community" || params.get("view") === "videos" || params.get("view") === "checkin") state.view = params.get("view");
   if (linkCode || params.get("view")) history.replaceState(null, "", location.pathname);
 
   state.code = load(KEY_CODE, null);
