@@ -236,7 +236,9 @@
           <label><input type="checkbox" value="Move better, less pain"> Move better, less pain</label>
           <label><input type="checkbox" value="Build a routine and consistency"> Build a routine and consistency</label>
           <label><input type="checkbox" value="General health"> General health</label>
+          <label><input type="checkbox" value="Other" id="goalOther"> Other</label>
         </div>
+        <input type="text" id="f-goal-other" class="hidden" placeholder="Type your other goal" aria-label="Other goal" style="margin-top:10px">
       </fieldset>
       <div class="q"><label for="f-sport">Do you play a sport? Which one, and what position or event?</label><input type="text" id="f-sport" data-label="Sport"></div>
       <div class="q"><label class="req" for="f-goal">Tell us more about your health and fitness goals</label><span class="hint">In your own words. What would make the next 12 weeks a win for you?</span><textarea id="f-goal" data-label="Health and fitness goals (in their words)" required></textarea></div>
@@ -462,6 +464,12 @@
   function isMinor() { var a = age(); return a !== null && a < 18; }
   $("f-dob").addEventListener("change", function () { $("under18").classList.toggle("hidden", !isMinor()); });
 
+  // "Other" goal: show a box to type it.
+  $("goalOther").addEventListener("change", function () {
+    $("f-goal-other").classList.toggle("hidden", !this.checked);
+    if (this.checked) $("f-goal-other").focus();
+  });
+
   // Any APSS yes: ask for details.
   function apssYes() { return !!document.querySelector("#apss input[value=Yes]:checked"); }
   $("apss").addEventListener("change", function () { $("apssYes").classList.toggle("hidden", !apssYes()); });
@@ -500,6 +508,7 @@
       if (!yn.querySelector("input:checked")) { yn.classList.add("bad"); problems.push(yn); }
     });
     if ($("apss").querySelector(".yn.bad")) bad($("apss"), "Please answer yes or no to each question.");
+    if ($("goalOther").checked && !$("f-goal-other").value.trim()) need($("f-goal-other"), "Please type your other goal.");
     if (apssYes() && !$("f-apss").value.trim()) need($("f-apss"), "Please tell us a bit more.");
     if (!$("f-agree").checked) { bad($("f-agree").closest(".q"), "Please tick this to send."); problems.push($("f-agree").closest(".q")); }
     return problems;
@@ -514,7 +523,9 @@
         if (el.closest(".hidden")) return;
         var v;
         if (el.classList.contains("opts")) {
-          v = Array.prototype.map.call(el.querySelectorAll("input:checked"), function (i) { return i.value; }).join(", ");
+          v = Array.prototype.map.call(el.querySelectorAll("input:checked"), function (i) {
+            return i.id === "goalOther" && $("f-goal-other").value.trim() ? "Other: " + $("f-goal-other").value.trim() : i.value;
+          }).join(", ");
         } else if (el.type === "checkbox") {
           v = el.checked ? "Yes" : "";
         } else if (el.type === "date" && el.value) {
