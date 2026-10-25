@@ -357,7 +357,7 @@ function doPost(e) {
   var body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_({ error: "Bad request" }); }
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  // The online coaching expression of interest form on the website (no client code).
+  // The online and face-to-face coaching interest forms on the website (no client code).
   if (body.eoi) {
     try { return json_(saveEnquiry_(ss, body.eoi)); }
     catch (err) { return json_({ error: "Something went wrong. Please try again." }); }
@@ -2921,12 +2921,14 @@ function clearReactionsOnEdit_(e) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Online coaching enquiries: the expression of interest form          */
-/* (eoi.html). Each one is a row on the "Online enquiries" tab, and    */
-/* Kirst gets an email with all the answers.                           */
+/* Coaching enquiries: the expression of interest forms. Online        */
+/* (eoi.html) go on the "Online enquiries" tab, face to face           */
+/* (face-to-face.html) on the "Face-to-face enquiries" tab, and Kirst  */
+/* gets an email with all the answers.                                 */
 /* ------------------------------------------------------------------ */
 
 var ENQUIRIES_TAB = "Online enquiries";
+var F2F_ENQUIRIES_TAB = "Face-to-face enquiries";
 var ENQUIRY_STATUSES = ["New", "Contacted", "Chat booked", "Signed up", "Not going ahead"];
 
 function saveEnquiry_(ss, eoi) {
@@ -2937,14 +2939,18 @@ function saveEnquiry_(ss, eoi) {
   var get = function (label) { for (var i = 0; i < answers.length; i++) if (answers[i][1] === label) return answers[i][2]; return ""; };
   var name = get("Name"), email = get("Email");
   if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Please fill in your name and email." };
+  var f2f = /face/i.test(String(eoi.type || ""));
+  var tabName = f2f ? F2F_ENQUIRIES_TAB : ENQUIRIES_TAB;
+  var kind = f2f ? "face-to-face coaching" : "online coaching";
+  var pkg = get("Package");
 
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   var sheet, row;
   try {
-    sheet = ss.getSheetByName(ENQUIRIES_TAB);
+    sheet = ss.getSheetByName(tabName);
     if (!sheet) {
-      sheet = ss.insertSheet(ENQUIRIES_TAB);
+      sheet = ss.insertSheet(tabName);
       sheet.getRange(1, 1, 1, 3).setValues([["Received", "Status", "Kirst's notes"]]);
       styleHeader_(sheet, 3);
       sheet.setFrozenColumns(3);
@@ -2997,20 +3003,21 @@ function saveEnquiry_(ss, eoi) {
       MailApp.sendEmail({
         to: to,
         replyTo: email,
-        subject: "ScoutCo: online coaching enquiry from " + name,
-        body: top + "\n" + text.join("\n") + "\n\nAll enquiries are on the Online enquiries tab:\n" + link,
+        subject: "ScoutCo: " + kind + " enquiry from " + name + (pkg && pkg !== "Not sure yet" ? " (" + pkg + ")" : ""),
+        body: top + "\n" + text.join("\n") + "\n\nAll enquiries are on the " + tabName + " tab:\n" + link,
         htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a">' +
           (apssYes ? '<p style="background:#fde8e8;color:#8a1c1c;padding:10px 12px;border-radius:8px"><b>Heads up:</b> they answered yes to at least one health screening question.</p>' : "") +
           '<p style="color:#5f5f5f">Reply to this email to write straight back to ' + esc_(name) + ".</p>" + html.join("") +
-          '<p style="margin-top:20px"><a href="' + link + '">Open the Online enquiries tab</a></p></div>'
+          '<p style="margin-top:20px"><a href="' + link + '">Open the ' + tabName + ' tab</a></p></div>'
       });
       // A short thank you to them, from you.
       MailApp.sendEmail({
         to: email,
         replyTo: to,
         name: "ScoutCo",
-        subject: "Thanks for your interest in ScoutCo online coaching",
-        body: "Hi " + name.split(/\s+/)[0] + ",\n\nThanks for filling in the online coaching form. We'll read through your answers and be in touch soon to have a chat about your goals.\n\n" +
+        subject: "Thanks for your interest in ScoutCo " + kind,
+        body: "Hi " + name.split(/\s+/)[0] + ",\n\nThanks for filling in the " + kind + " form. We'll read through your answers and be in touch soon to have a chat about your goals" +
+          (f2f ? " and find you a session time" : "") + ".\n\n" +
           "If you have any questions in the meantime, just reply to this email.\n\nThe ScoutCo team\nhttps://www.scoutco.com.au/"
       });
     }

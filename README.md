@@ -231,3 +231,9 @@ Setup: make a free OneSignal account and a Web app for `https://scoutco01.github
 Answers go to the same Apps Script web app. Each enquiry is a row on the **Online enquiries** tab (made on the first one), with a Status dropdown and a notes column for Kirst. Kirst gets an email with every answer (a red heads-up if any APSS answer is yes; hit Reply to write back to them), and the person gets a short thank-you email.
 
 Link to it from the website with a Squarespace Button block. Add `?preview` to the address to try the form without saving anything.
+
+## Face-to-face coaching enquiry form
+
+`face-to-face.html` (https://scoutco01.github.io/scoutco-app/face-to-face.html) is the same idea for the weekly and fortnightly face-to-face packages. It explains how face-to-face coaching works and the two packages, then asks the same questions as the online form plus which package, which days and times suit for studio sessions, and how they'll train between sessions.
+
+Enquiries go on the **Face-to-face enquiries** tab (made on the first one), with the same Status dropdown, notes column and emails. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.
