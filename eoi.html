@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Online coaching with Kirst · ScoutCo</title>
+  <meta name="description" content="Online strength and conditioning coaching with Kirst at ScoutCo. Find out how it works and register your interest.">
+  <meta name="theme-color" content="#121016">
+  <link rel="icon" href="icons/favicon.png" type="image/png">
+  <style>
+    :root {
+      --bg: #121016; --surface: #1d1a24; --surface-2: #272330; --border: #36313f;
+      --text: #f4f2f7; --muted: #a49db0; --accent: #8b5cf6; --accent-strong: #a78bfa;
+      --green: #7cc04a; --danger: #f87171; --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text);
+      font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent-strong); }
+    .hidden { display: none !important; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 0 16px 48px; }
+    header.top { text-align: center; padding: 36px 0 8px; }
+    header.top img { width: min(300px, 80%); height: auto; }
+    h1 { font-size: 32px; line-height: 1.15; margin: 26px 0 10px; text-align: center; }
+    .lead { text-align: center; color: var(--muted); font-size: 18px; margin: 0 auto 22px; max-width: 560px; }
+    .cta { text-align: center; margin: 0 0 34px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      border-radius: 12px; border: 1px solid var(--accent); background: var(--accent); color: #fff;
+      padding: 14px 22px; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer;
+    }
+    .btn:disabled { opacity: .6; cursor: default; }
+    .btn.ghost { background: transparent; color: var(--text); border-color: var(--border); }
+    h2 { font-size: 23px; margin: 40px 0 14px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; margin: 14px 0; }
+    .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+    .steps li { position: relative; padding: 0 0 18px 48px; counter-increment: s; }
+    .steps li:last-child { padding-bottom: 0; }
+    .steps li:before {
+      content: counter(s); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%;
+      background: var(--surface-2); border: 1px solid var(--accent); color: var(--accent-strong);
+      display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px;
+    }
+    .steps b { display: block; }
+    .steps span, .muted { color: var(--muted); }
+    .ticks { list-style: none; margin: 0; padding: 0; }
+    .ticks li { position: relative; padding: 5px 0 5px 28px; }
+    .ticks li:before {
+      content: ""; position: absolute; left: 3px; top: 11px; width: 13px; height: 7px;
+      border-left: 2.5px solid var(--green); border-bottom: 2.5px solid var(--green); transform: rotate(-45deg);
+    }
+    .price { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+    .price h3 { margin: 0; font-size: 19px; }
+    .price b { font-size: 24px; }
+    .price small { color: var(--muted); display: block; text-align: right; }
+    .eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent-strong); margin: 16px 0 4px; }
+    details { border-top: 1px solid var(--border); padding: 12px 0; }
+    details:first-of-type { border-top: 0; padding-top: 0; }
+    summary { font-weight: 700; cursor: pointer; }
+    details p { margin: 8px 0 0; color: var(--muted); }
+
+    /* Form */
+    form h3 { margin: 0 0 4px; font-size: 19px; }
+    form .card > p.muted { margin: 0 0 14px; font-size: 15px; }
+    .q { margin: 18px 0 0; border: 0; padding: 0; min-width: 0; }
+    .q > label, .q > legend { display: block; font-weight: 600; margin-bottom: 6px; padding: 0; }
+    .q .hint { display: block; color: var(--muted); font-size: 14px; font-weight: 400; margin: -2px 0 8px; }
+    .req:after { content: " *"; color: var(--accent-strong); }
+    input[type=text], input[type=email], input[type=tel], input[type=date], input[type=number], select, textarea {
+      width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit;
+    }
+    input[type=date] { color-scheme: dark; min-height: 48px; }
+    textarea { min-height: 88px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .row3 label { font-size: 14px; color: var(--muted); display: block; margin-bottom: 4px; }
+    .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+    .opts label {
+      display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--bg); cursor: pointer; font-size: 15px; user-select: none;
+    }
+    .opts input { accent-color: var(--accent); margin: 0; }
+    .opts label:has(input:checked) { border-color: var(--accent); background: rgba(139, 92, 246, .16); }
+    .yn { display: grid; grid-template-columns: 1fr auto; gap: 10px 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
+    .yn:first-of-type { border-top: 0; }
+    .yn .opts label { padding: 7px 14px; }
+    .yn > span { font-size: 15px; }
+    .check { display: flex; gap: 10px; align-items: flex-start; margin: 14px 0 0; cursor: pointer; }
+    .check input { margin-top: 4px; accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+    .note { background: #2a2140; border-left: 3px solid var(--accent); border-radius: 10px; padding: 10px 12px; margin: 12px 0 0; font-size: 15px; }
+    .err-msg { color: var(--danger); font-size: 14px; margin-top: 6px; }
+    .bad input, .bad select, .bad textarea { border-color: var(--danger); }
+    .bad .opts label { border-color: var(--danger); }
+    .trap { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    .submit { text-align: center; margin: 24px 0 0; }
+    .submit .btn { width: 100%; max-width: 360px; font-size: 17px; padding: 16px; }
+    #formError { text-align: center; }
+    .thanks { text-align: center; padding: 30px 0 10px; }
+    .thanks .big { font-size: 56px; line-height: 1; }
+    footer { text-align: center; color: var(--muted); font-size: 14px; margin-top: 40px; }
+    @media (max-width: 560px) {
+      h1 { font-size: 27px; }
+      .lead { font-size: 16px; }
+      .row, .row3 { grid-template-columns: 1fr; }
+      .card { padding: 16px; }
+      .yn { grid-template-columns: 1fr; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a href="https://www.scoutco.com.au/"><img src="icons/logo-full-white.png" alt="ScoutCo · Sports massage, personal training, mindset coaching" width="320" height="86"></a>
+  </header>
+
+  <div id="info">
+    <h1>Online coaching with Kirst</h1>
+    <p class="lead">A strength and conditioning program written for you and your goals, on your phone, with a coach who checks in every week. Wherever you train.</p>
+    <p class="cta"><a class="btn" href="#apply">Register your interest</a></p>
+
+    <h2>How it works</h2>
+    <div class="card">
+      <ol class="steps">
+        <li><b>Tell Kirst about you</b><span>Fill in the form below. It takes about 10 minutes and covers your goals, training, equipment and health.</span></li>
+        <li><b>Have a chat</b><span>Kirst reads your answers and gets in touch to talk through your goals, answer your questions and make sure online coaching is the right fit.</span></li>
+        <li><b>Get set up</b><span>You get your own link to the ScoutCo app. Save it to your home screen and sign your agreement right there in the app.</span></li>
+        <li><b>Train</b><span>Your program shows up in the app week by week. Tick off your sets, log your weights and see what you lifted last time.</span></li>
+        <li><b>Check in every week</b><span>From Friday, a quick check-in on your sleep, nutrition, energy, soreness and head noise. Kirst replies personally and adjusts your program from what you tell her.</span></li>
+        <li><b>Review and plan</b><span>A one-on-one call with Kirst each 4-week phase to look at how it's going and plan what's next.</span></li>
+      </ol>
+    </div>
+
+    <h2>What you get</h2>
+    <div class="card">
+      <div class="price">
+        <h3>Online coaching</h3>
+        <div><b>$60/week</b><small>$720 per 12-week block</small></div>
+      </div>
+      <ul class="ticks">
+        <li>A personalised 12-week program written by Kirst for your sport, your goals and the equipment you have</li>
+        <li>The ScoutCo app on your phone with your live program, week by week</li>
+        <li>Weekly check-in in the app with a personal reply from Kirst</li>
+        <li>Your program adjusted week to week from your check-ins and logged weights</li>
+        <li>A one-on-one check-in call with Kirst every 4-week phase</li>
+        <li>Form checks: send Kirst a video of your main lifts and get her feedback</li>
+        <li>Home swaps for days you can't make the gym</li>
+        <li>Progress tracking: streaks, sessions, charts and PB celebrations</li>
+        <li>Leave Kirst a note after any session</li>
+        <li>Lift Club Community: share wins and photos and cheer each other on</li>
+        <li>Mindset coaching from a coach with a psychology degree</li>
+      </ul>
+      <p class="eyebrow">Your coach</p>
+      <p class="muted" style="margin:0">Kirst is a qualified and insured coach: ASCA Level 1 Coach, Cert IV Fitness, BSc Psychology (Hons), Dip Remedial Massage, current first aid and QLD blue card.</p>
+    </div>
+
+    <h2>Good to know</h2>
+    <div class="card">
+      <details>
+        <summary>Do I need a gym?</summary>
+        <p>No. Kirst writes your program around what you have, whether that's a full gym, a home setup or a few dumbbells. Tell her what you've got in the form.</p>
+      </details>
+      <details>
+        <summary>How long is a block?</summary>
+        <p>Training runs in 12-week blocks and renews automatically. Give 2 weeks' notice if you're not renewing.</p>
+      </details>
+      <details>
+        <summary>How do I pay?</summary>
+        <p>Pay upfront, or weekly or fortnightly in instalments.</p>
+      </details>
+      <details>
+        <summary>Would I be better off face to face?</summary>
+        <p>You can also mix online coaching with a session with Kirst every week or fortnight. Mention it in the form and she'll talk you through the options.</p>
+      </details>
+      <details>
+        <summary>Does filling this in sign me up?</summary>
+        <p>No. This is just to register your interest. Nothing is booked or paid until you've had a chat with Kirst and decided to go ahead.</p>
+      </details>
+    </div>
+  </div>
+
+  <form id="eoi" novalidate>
+    <h2 id="apply">Register your interest</h2>
+    <p class="muted" style="margin-top:-6px">Questions with a <span style="color:var(--accent-strong)">*</span> are needed. The more you tell Kirst, the better she can plan your program.</p>
+
+    <!-- 1. About you -->
+    <div class="card" data-section="About you">
+      <h3>About you</h3>
+      <div class="row">
+        <div class="q"><label class="req" for="f-name">Full name</label><input type="text" id="f-name" data-label="Name" autocomplete="name" required></div>
+        <div class="q"><label class="req" for="f-dob">Date of birth</label><input type="date" id="f-dob" data-label="Date of birth" required></div>
+      </div>
+      <div class="row">
+        <div class="q"><label class="req" for="f-email">Email</label><input type="email" id="f-email" data-label="Email" autocomplete="email" required></div>
+        <div class="q"><label class="req" for="f-phone">Mobile</label><input type="tel" id="f-phone" data-label="Mobile" autocomplete="tel" required></div>
+      </div>
+      <div class="q"><label for="f-where">Where are you based?</label><span class="hint">Suburb and state, or country if you're outside Australia</span><input type="text" id="f-where" data-label="Location"></div>
+      <div class="q"><label for="f-job">What do you do for work?</label><span class="hint">And whether it's mostly sitting, on your feet or physical</span><input type="text" id="f-job" data-label="Work"></div>
+
+      <div id="under18" class="hidden">
+        <p class="note">As you're under 18, a parent or guardian will need to be part of the chat with Kirst and sign a consent form before you start.</p>
+        <div class="row">
+          <div class="q"><label class="req" for="f-pname">Parent or guardian's name</label><input type="text" id="f-pname" data-label="Parent or guardian name"></div>
+          <div class="q"><label class="req" for="f-pcontact">Their email or mobile</label><input type="text" id="f-pcontact" data-label="Parent or guardian contact"></div>
+        </div>
+      </div>
+
+      <fieldset class="q"><legend>How did you hear about ScoutCo?</legend>
+        <div class="opts" data-label="Heard about ScoutCo from">
+          <label><input type="radio" name="heard" value="Instagram"> Instagram</label>
+          <label><input type="radio" name="heard" value="Facebook"> Facebook</label>
+          <label><input type="radio" name="heard" value="Google"> Google</label>
+          <label><input type="radio" name="heard" value="A friend or client"> A friend or client</label>
+          <label><input type="radio" name="heard" value="My club or gym"> My club or gym</label>
+          <label><input type="radio" name="heard" value="Other"> Other</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- 2. Goals -->
+    <div class="card" data-section="Goals">
+      <h3>Your goals</h3>
+      <fieldset class="q"><legend class="req">What do you want from training?</legend><span class="hint">Pick as many as you like</span>
+        <div class="opts" data-label="Goals" data-required="1">
+          <label><input type="checkbox" value="Get stronger"> Get stronger</label>
+          <label><input type="checkbox" value="Build muscle"> Build muscle</label>
+          <label><input type="checkbox" value="Lose body fat"> Lose body fat</label>
+          <label><input type="checkbox" value="Perform better in my sport"> Perform better in my sport</label>
+          <label><input type="checkbox" value="Powerlifting or lifting comp"> Powerlifting or lifting comp</label>
+          <label><input type="checkbox" value="Fitness and conditioning"> Fitness and conditioning</label>
+          <label><input type="checkbox" value="Come back from an injury"> Come back from an injury</label>
+          <label><input type="checkbox" value="Move better, less pain"> Move better, less pain</label>
+          <label><input type="checkbox" value="Build a routine and consistency"> Build a routine and consistency</label>
+          <label><input type="checkbox" value="General health"> General health</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-sport">Do you play a sport? Which one, and what position or event?</label><input type="text" id="f-sport" data-label="Sport"></div>
+      <div class="q"><label class="req" for="f-goal">In your own words, what's your main goal?</label><span class="hint">What would make the next 12 weeks a win for you?</span><textarea id="f-goal" data-label="Main goal" required></textarea></div>
+      <div class="q"><label for="f-event">Anything coming up you're training for?</label><span class="hint">A season, comp, event or date. Leave blank if not.</span><input type="text" id="f-event" data-label="Event or date"></div>
+      <div class="q"><label for="f-why">Why now? What's made you want to start?</label><textarea id="f-why" data-label="Why now"></textarea></div>
+    </div>
+
+    <!-- 3. Training -->
+    <div class="card" data-section="Training">
+      <h3>Your training</h3>
+      <fieldset class="q"><legend class="req">How long have you been doing strength training?</legend>
+        <div class="opts" data-label="Strength training experience" data-required="1">
+          <label><input type="radio" name="exp" value="Never or hardly at all"> Never or hardly</label>
+          <label><input type="radio" name="exp" value="Less than 1 year"> Less than 1 year</label>
+          <label><input type="radio" name="exp" value="1 to 3 years"> 1 to 3 years</label>
+          <label><input type="radio" name="exp" value="3+ years"> 3+ years</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-now">What does your training look like right now?</label><span class="hint">E.g. gym 3 times a week, footy training Tues and Thurs, a run on Sundays</span><textarea id="f-now" data-label="Current training"></textarea></div>
+      <fieldset class="q"><legend>Have you had a coach or followed a program before?</legend>
+        <div class="opts" data-label="Had a coach before">
+          <label><input type="radio" name="coached" value="Yes, a coach"> Yes, a coach</label>
+          <label><input type="radio" name="coached" value="Yes, my own or an online program"> Yes, my own or an online program</label>
+          <label><input type="radio" name="coached" value="No"> No</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-likes">Anything you love or hate doing in training?</label><textarea id="f-likes" data-label="Likes and dislikes" style="min-height:64px"></textarea></div>
+    </div>
+
+    <!-- 4. Schedule -->
+    <div class="card" data-section="Schedule">
+      <h3>Your week</h3>
+      <fieldset class="q"><legend class="req">How many days a week would you like to train?</legend><span class="hint">Strength sessions from Kirst, not counting your sport</span>
+        <div class="opts" data-label="Days per week" data-required="1">
+          <label><input type="radio" name="days" value="2"> 2</label>
+          <label><input type="radio" name="days" value="3"> 3</label>
+          <label><input type="radio" name="days" value="4"> 4</label>
+          <label><input type="radio" name="days" value="5"> 5</label>
+          <label><input type="radio" name="days" value="6"> 6</label>
+          <label><input type="radio" name="days" value="Not sure"> Not sure</label>
+        </div>
+      </fieldset>
+      <fieldset class="q"><legend>How long can you train each session?</legend>
+        <div class="opts" data-label="Session length">
+          <label><input type="radio" name="len" value="30 min"> 30 min</label>
+          <label><input type="radio" name="len" value="45 min"> 45 min</label>
+          <label><input type="radio" name="len" value="60 min"> 60 min</label>
+          <label><input type="radio" name="len" value="75+ min"> 75+ min</label>
+        </div>
+      </fieldset>
+      <fieldset class="q"><legend>Which days suit you best?</legend>
+        <div class="opts" data-label="Best days">
+          <label><input type="checkbox" value="Mon"> Mon</label>
+          <label><input type="checkbox" value="Tue"> Tue</label>
+          <label><input type="checkbox" value="Wed"> Wed</label>
+          <label><input type="checkbox" value="Thu"> Thu</label>
+          <label><input type="checkbox" value="Fri"> Fri</label>
+          <label><input type="checkbox" value="Sat"> Sat</label>
+          <label><input type="checkbox" value="Sun"> Sun</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- 5. Equipment -->
+    <div class="card" data-section="Equipment">
+      <h3>Where you'll train</h3>
+      <fieldset class="q"><legend class="req">Where will you do most of your training?</legend>
+        <div class="opts" data-label="Training location" data-required="1">
+          <label><input type="radio" name="loc" value="Commercial gym"> Commercial gym</label>
+          <label><input type="radio" name="loc" value="Home gym"> Home gym</label>
+          <label><input type="radio" name="loc" value="Mix of gym and home"> Mix of gym and home</label>
+          <label><input type="radio" name="loc" value="Club or school gym"> Club or school gym</label>
+          <label><input type="radio" name="loc" value="Outdoors or minimal equipment"> Outdoors or minimal kit</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-gym">Which gym?</label><span class="hint">Name and suburb, if you train at one</span><input type="text" id="f-gym" data-label="Gym"></div>
+      <fieldset class="q"><legend class="req">What equipment can you use?</legend><span class="hint">Tick everything you have access to</span>
+        <div class="opts" data-label="Equipment" data-required="1">
+          <label><input type="checkbox" value="Barbell and plates"> Barbell and plates</label>
+          <label><input type="checkbox" value="Squat rack"> Squat rack</label>
+          <label><input type="checkbox" value="Bench"> Bench</label>
+          <label><input type="checkbox" value="Trap bar"> Trap bar</label>
+          <label><input type="checkbox" value="Dumbbells"> Dumbbells</label>
+          <label><input type="checkbox" value="Kettlebells"> Kettlebells</label>
+          <label><input type="checkbox" value="Cable machine"> Cable machine</label>
+          <label><input type="checkbox" value="Leg press or other machines"> Leg press or machines</label>
+          <label><input type="checkbox" value="Pull-up bar"> Pull-up bar</label>
+          <label><input type="checkbox" value="Resistance bands"> Resistance bands</label>
+          <label><input type="checkbox" value="Plyo box or step"> Plyo box or step</label>
+          <label><input type="checkbox" value="Sled"> Sled</label>
+          <label><input type="checkbox" value="Rower, bike, ski erg or treadmill"> Rower, bike, ski or treadmill</label>
+          <label><input type="checkbox" value="Space to run or sprint"> Space to run or sprint</label>
+          <label><input type="checkbox" value="Bodyweight only"> Bodyweight only</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-kit">Anything else about your equipment?</label><span class="hint">E.g. dumbbells only go up to 20 kg, or no rack at home</span><input type="text" id="f-kit" data-label="Equipment notes"></div>
+    </div>
+
+    <!-- 6. Strength -->
+    <div class="card" data-section="Strength">
+      <h3>Your lifts</h3>
+      <p class="muted">Your 1RM is the most you can lift for one rep. If you don't know it, leave it blank. That's completely fine.</p>
+      <div class="row3">
+        <div class="q"><label for="f-squat">Back squat 1RM (kg)</label><input type="number" inputmode="decimal" min="0" step="0.5" id="f-squat" data-label="Back squat 1RM (kg)"></div>
+        <div class="q"><label for="f-bench">Bench press 1RM (kg)</label><input type="number" inputmode="decimal" min="0" step="0.5" id="f-bench" data-label="Bench press 1RM (kg)"></div>
+        <div class="q"><label for="f-dead">Deadlift 1RM (kg)</label><input type="number" inputmode="decimal" min="0" step="0.5" id="f-dead" data-label="Deadlift 1RM (kg)"></div>
+      </div>
+      <div class="q"><label for="f-sets">Don't know your 1RM? Tell Kirst a recent heavy set instead</label><span class="hint">E.g. squat 60 kg for 5, deadlift 80 kg for 3. Or anything else you've tested, like a 5 km time.</span><input type="text" id="f-sets" data-label="Recent heavy sets or tests"></div>
+      <div class="q"><label for="f-bw">Bodyweight (kg)</label><span class="hint">Optional</span><input type="number" inputmode="decimal" min="0" step="0.1" id="f-bw" data-label="Bodyweight (kg)" style="max-width:200px"></div>
+    </div>
+
+    <!-- 7. Health -->
+    <div class="card" data-section="Health">
+      <h3>Health screening</h3>
+      <p class="muted">These questions come from the Adult Pre-exercise Screening System (APSS) and help Kirst keep you safe. Answering yes doesn't stop you training. It just means Kirst may ask you to check in with your doctor first.</p>
+      <div class="q" id="apss" data-required="1">
+        <div class="yn"><span class="req">Has your doctor ever told you that you have a heart condition, or have you ever had a stroke?</span><div class="opts" data-label="APSS 1. Heart condition or stroke"><label><input type="radio" name="a1" value="No"> No</label><label><input type="radio" name="a1" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">Do you ever have unexplained pain or discomfort in your chest, at rest or during exercise?</span><div class="opts" data-label="APSS 2. Chest pain"><label><input type="radio" name="a2" value="No"> No</label><label><input type="radio" name="a2" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">Do you ever feel faint, dizzy or lose your balance during exercise?</span><div class="opts" data-label="APSS 3. Faint or dizzy"><label><input type="radio" name="a3" value="No"> No</label><label><input type="radio" name="a3" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">Have you had an asthma attack that needed immediate medical attention in the last 12 months?</span><div class="opts" data-label="APSS 4. Asthma attack"><label><input type="radio" name="a4" value="No"> No</label><label><input type="radio" name="a4" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">If you have diabetes (type 1 or 2), have you had trouble controlling your blood sugar in the last 3 months?</span><div class="opts" data-label="APSS 5. Diabetes control"><label><input type="radio" name="a5" value="No"> No or not diabetic</label><label><input type="radio" name="a5" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">Do you have a diagnosed muscle, bone, tendon, ligament or joint problem that you've been told exercise could make worse?</span><div class="opts" data-label="APSS 6. Muscle or joint problem"><label><input type="radio" name="a6" value="No"> No</label><label><input type="radio" name="a6" value="Yes"> Yes</label></div></div>
+        <div class="yn"><span class="req">Do you have any other medical condition that might make it dangerous for you to exercise?</span><div class="opts" data-label="APSS 7. Other medical condition"><label><input type="radio" name="a7" value="No"> No</label><label><input type="radio" name="a7" value="Yes"> Yes</label></div></div>
+      </div>
+      <div id="apssYes" class="hidden">
+        <p class="note">Thanks for letting Kirst know. She may ask you to get clearance from your GP before you start.</p>
+        <div class="q"><label class="req" for="f-apss">Tell Kirst a bit more about anything you answered yes to</label><textarea id="f-apss" data-label="APSS details"></textarea></div>
+      </div>
+      <div class="q"><label for="f-injury">Any injuries, pain or niggles right now?</label><span class="hint">Where, how long, and what makes it better or worse</span><textarea id="f-injury" data-label="Current injuries or pain"></textarea></div>
+      <div class="q"><label for="f-past">Past injuries or surgeries</label><textarea id="f-past" data-label="Past injuries or surgeries" style="min-height:64px"></textarea></div>
+      <div class="q"><label for="f-meds">Medical conditions or medications Kirst should know about</label><span class="hint">E.g. blood pressure, iron, thyroid, hypermobility, mental health</span><textarea id="f-meds" data-label="Conditions or medications" style="min-height:64px"></textarea></div>
+      <fieldset class="q"><legend>Are you pregnant, or have you had a baby in the last 12 months?</legend>
+        <div class="opts" data-label="Pregnant or postpartum">
+          <label><input type="radio" name="preg" value="No"> No</label>
+          <label><input type="radio" name="preg" value="Pregnant"> Pregnant</label>
+          <label><input type="radio" name="preg" value="Had a baby in the last 12 months"> Had a baby in the last 12 months</label>
+          <label><input type="radio" name="preg" value="Prefer to tell Kirst in person"> Prefer to tell Kirst in person</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <!-- 8. Lifestyle -->
+    <div class="card" data-section="Lifestyle">
+      <h3>Life outside training</h3>
+      <fieldset class="q"><legend>How much sleep do you usually get?</legend>
+        <div class="opts" data-label="Sleep">
+          <label><input type="radio" name="sleep" value="Under 6 hours"> Under 6 hours</label>
+          <label><input type="radio" name="sleep" value="6 to 7 hours"> 6 to 7 hours</label>
+          <label><input type="radio" name="sleep" value="7 to 8 hours"> 7 to 8 hours</label>
+          <label><input type="radio" name="sleep" value="8+ hours"> 8+ hours</label>
+        </div>
+      </fieldset>
+      <fieldset class="q"><legend>How's your stress lately?</legend>
+        <div class="opts" data-label="Stress">
+          <label><input type="radio" name="stress" value="Low"> Low</label>
+          <label><input type="radio" name="stress" value="Medium"> Medium</label>
+          <label><input type="radio" name="stress" value="High"> High</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-food">Anything about your nutrition Kirst should know?</label><span class="hint">E.g. vegetarian, allergies, a past eating disorder, or a goal around food</span><textarea id="f-food" data-label="Nutrition" style="min-height:64px"></textarea></div>
+    </div>
+
+    <!-- 9. Last bits -->
+    <div class="card" data-section="Anything else">
+      <h3>Last bits</h3>
+      <fieldset class="q"><legend>Which would you like to hear about?</legend>
+        <div class="opts" data-label="Interested in">
+          <label><input type="checkbox" value="Online coaching"> Online coaching</label>
+          <label><input type="checkbox" value="Online plus fortnightly face to face"> Online plus fortnightly face to face</label>
+          <label><input type="checkbox" value="Online plus weekly face to face"> Online plus weekly face to face</label>
+          <label><input type="checkbox" value="Not sure yet"> Not sure yet</label>
+        </div>
+      </fieldset>
+      <fieldset class="q"><legend>When would you like to start?</legend>
+        <div class="opts" data-label="Start">
+          <label><input type="radio" name="start" value="As soon as possible"> As soon as possible</label>
+          <label><input type="radio" name="start" value="In the next month"> In the next month</label>
+          <label><input type="radio" name="start" value="Just looking for now"> Just looking for now</label>
+        </div>
+      </fieldset>
+      <fieldset class="q"><legend>Best way for Kirst to get in touch?</legend>
+        <div class="opts" data-label="Contact by">
+          <label><input type="radio" name="contact" value="Call"> Call</label>
+          <label><input type="radio" name="contact" value="Text"> Text</label>
+          <label><input type="radio" name="contact" value="Email"> Email</label>
+        </div>
+      </fieldset>
+      <div class="q"><label for="f-else">Anything else you'd like Kirst to know, or questions for her?</label><textarea id="f-else" data-label="Anything else"></textarea></div>
+
+      <label class="check q" data-required="1"><input type="checkbox" id="f-agree" data-label="Agreed"> <span class="req">The information I've given is true to the best of my knowledge. I understand this isn't a sign-up, and that I'm responsible for getting medical advice if I need it. I've read the <a href="https://www.scoutco.com.au/policies" target="_blank" rel="noopener">ScoutCo policies</a>, including how my information is kept private.</span></label>
+      <div class="trap" aria-hidden="true"><label>Leave this empty <input type="text" id="f-website" tabindex="-1" autocomplete="off"></label></div>
+    </div>
+
+    <p id="formError" class="err-msg hidden"></p>
+    <div class="submit"><button class="btn" type="submit" id="sendBtn">Send to Kirst</button></div>
+  </form>
+
+  <div id="thanks" class="thanks hidden">
+    <div class="big">💜</div>
+    <h1 id="thanksTitle">Thanks!</h1>
+    <p class="lead">Kirst will read through your answers and be in touch soon to have a chat. Keep an eye on your phone and email, including your junk folder.</p>
+    <p class="cta"><a class="btn ghost" href="https://www.scoutco.com.au/">Back to ScoutCo</a></p>
+  </div>
+
+  <footer>ScoutCo · Logan, QLD · <a href="mailto:Kirsty@scoutco.com.au">Kirsty@scoutco.com.au</a></footer>
+</div>
+
+<script src="config.js"></script>
+<script>
+(function () {
+  var CONFIG = window.SCOUTCO_CONFIG || {};
+  var form = document.getElementById("eoi");
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Under 18: ask for a parent or guardian.
+  function age() {
+    var v = $("f-dob").value; if (!v) return null;
+    var d = new Date(v + "T00:00:00"), n = new Date();
+    var a = n.getFullYear() - d.getFullYear();
+    if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) a--;
+    return a;
+  }
+  function isMinor() { var a = age(); return a !== null && a < 18; }
+  $("f-dob").addEventListener("change", function () { $("under18").classList.toggle("hidden", !isMinor()); });
+
+  // Any APSS yes: ask for details.
+  function apssYes() { return !!document.querySelector("#apss input[value=Yes]:checked"); }
+  $("apss").addEventListener("change", function () { $("apssYes").classList.toggle("hidden", !apssYes()); });
+
+  // Clear an error as soon as it's fixed.
+  form.addEventListener("input", function (e) { var q = e.target.closest(".q, .yn"); if (q) clearBad(q); });
+  form.addEventListener("change", function (e) { var q = e.target.closest(".q, .yn"); if (q) clearBad(q); });
+
+  function clearBad(q) {
+    q.classList.remove("bad");
+    var m = q.querySelector(":scope > .err-msg"); if (m) m.remove();
+    var apss = q.closest("#apss");
+    if (apss && apss !== q && !apss.querySelector(".yn.bad")) clearBad(apss);
+  }
+  function bad(q, msg) {
+    q.classList.add("bad");
+    if (!q.querySelector(":scope > .err-msg")) {
+      var m = document.createElement("div"); m.className = "err-msg"; m.textContent = msg; q.appendChild(m);
+    }
+  }
+
+  function validate() {
+    var problems = [];
+    form.querySelectorAll(".q, .yn").forEach(clearBad);
+    function need(el, msg) { var q = el.closest(".q"); bad(q, msg); problems.push(q); }
+    ["f-name", "f-dob", "f-phone", "f-goal"].forEach(function (id) { if (!$(id).value.trim()) need($(id), "Please fill this in."); });
+    var em = $("f-email").value.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) need($("f-email"), "Please check your email address.");
+    var a = age();
+    if (a !== null && (a < 10 || a > 100)) need($("f-dob"), "Please check your date of birth.");
+    if (isMinor()) ["f-pname", "f-pcontact"].forEach(function (id) { if (!$(id).value.trim()) need($(id), "Please fill this in."); });
+    form.querySelectorAll(".opts[data-required]").forEach(function (o) {
+      if (!o.querySelector("input:checked")) { var q = o.closest(".q"); bad(q, "Please pick at least one."); problems.push(q); }
+    });
+    $("apss").querySelectorAll(".yn").forEach(function (yn) {
+      if (!yn.querySelector("input:checked")) { yn.classList.add("bad"); problems.push(yn); }
+    });
+    if ($("apss").querySelector(".yn.bad")) bad($("apss"), "Please answer yes or no to each question.");
+    if (apssYes() && !$("f-apss").value.trim()) need($("f-apss"), "Please tell Kirst a bit more.");
+    if (!$("f-agree").checked) { bad($("f-agree").closest(".q"), "Please tick this to send."); problems.push($("f-agree").closest(".q")); }
+    return problems;
+  }
+
+  // Every answer, in order, as [section, question, answer].
+  function answers() {
+    var out = [];
+    form.querySelectorAll("[data-section]").forEach(function (sec) {
+      var name = sec.getAttribute("data-section");
+      sec.querySelectorAll("[data-label]").forEach(function (el) {
+        if (el.closest(".hidden")) return;
+        var v;
+        if (el.classList.contains("opts")) {
+          v = Array.prototype.map.call(el.querySelectorAll("input:checked"), function (i) { return i.value; }).join(", ");
+        } else if (el.type === "checkbox") {
+          v = el.checked ? "Yes" : "";
+        } else if (el.type === "date" && el.value) {
+          v = el.value.split("-").reverse().join("/");
+          var a = age(); if (a !== null) v += " (age " + a + ")";
+        } else {
+          v = el.value.trim();
+        }
+        out.push([name, el.getAttribute("data-label"), v]);
+      });
+    });
+    return out;
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var err = $("formError");
+    err.classList.add("hidden");
+    var problems = validate();
+    if (problems.length) {
+      problems[0].scrollIntoView({ behavior: "smooth", block: "center" });
+      err.textContent = "A few answers still need filling in. They're marked in red.";
+      err.classList.remove("hidden");
+      return;
+    }
+    var btn = $("sendBtn");
+    btn.disabled = true; btn.textContent = "Sending...";
+    var payload = { eoi: { answers: answers(), website: $("f-website").value } };
+    var done = function () {
+      var first = $("f-name").value.trim().split(/\s+/)[0];
+      $("thanksTitle").textContent = "Thanks, " + first + "!";
+      $("info").classList.add("hidden"); form.classList.add("hidden");
+      $("thanks").classList.remove("hidden");
+      window.scrollTo(0, 0);
+    };
+    if (!CONFIG.apiUrl || /[?&]preview\b/.test(location.search)) { setTimeout(done, 400); return; }
+    fetch(CONFIG.apiUrl, { method: "POST", body: JSON.stringify(payload) })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res || !res.ok) throw new Error(res && res.error || "Not saved");
+        done();
+      })
+      .catch(function () {
+        btn.disabled = false; btn.textContent = "Send to Kirst";
+        err.innerHTML = "Sorry, that didn't send. Please check your internet and try again, or email Kirst at " +
+          "<a href=\"mailto:Kirsty@scoutco.com.au\">Kirsty@scoutco.com.au</a>.";
+        err.classList.remove("hidden");
+      });
+  });
+})();
+</script>
+</body>
+</html>

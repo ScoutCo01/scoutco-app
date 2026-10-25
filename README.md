@@ -223,3 +223,11 @@ Setup: make a free OneSignal account and a Web app for `https://scoutco01.github
 - Keep the app open with the screen on while a video sends. The phone sends it straight to your Google Drive, so it goes as fast as your signal allows (if a phone won't allow that, it goes through the sheet instead, which is slower). Videos up to 500 MB work; a minute of 1080p phone video is about 100 MB, and 4K is about 4 times that. If the connection drops, the app picks up where it left off.
 - A video can take a few minutes after sending before Google lets it play.
 - Your free Google Drive has 15 GB, which holds a few hundred short clips. Delete old ones from the ScoutCo videos folder when it gets full.
+
+## Online coaching enquiry form
+
+`eoi.html` is a public page (https://scoutco01.github.io/scoutco-app/eoi.html) for people interested in online coaching. It explains how online coaching works and what's included, then asks about the person: contact details, goals, training background, days per week, equipment, 1RMs (squat, bench, deadlift), APSS health screening, injuries and lifestyle.
+
+Answers go to the same Apps Script web app. Each enquiry is a row on the **Online enquiries** tab (made on the first one), with a Status dropdown and a notes column for Kirst. Kirst gets an email with every answer (a red heads-up if any APSS answer is yes; hit Reply to write back to them), and the person gets a short thank-you email.
+
+Link to it from the website with a Squarespace Button block. Add `?preview` to the address to try the form without saving anything.
