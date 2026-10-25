@@ -2929,6 +2929,7 @@ function clearReactionsOnEdit_(e) {
 
 var ENQUIRIES_TAB = "Online enquiries";
 var F2F_ENQUIRIES_TAB = "Face-to-face enquiries";
+var ENQUIRY_FOLDER = "ScoutCo enquiries"; // in your Drive, with an "Online" and a "Face to face" folder inside
 var ENQUIRY_STATUSES = ["New", "Contacted", "Chat booked", "Signed up", "Not going ahead"];
 
 function saveEnquiry_(ss, eoi) {
@@ -2979,6 +2980,10 @@ function saveEnquiry_(ss, eoi) {
     lock.releaseLock();
   }
 
+  // Save a PDF of their answers in your Drive and link it on the row.
+  var pdf = null;
+  try { pdf = enquiryPdf_(sheet, row, name, answers, f2f); } catch (err) { /* the enquiry is already saved */ }
+
   // Email Kirst every answer, grouped by section.
   try {
     var to = Session.getEffectiveUser().getEmail();
@@ -3000,7 +3005,7 @@ function saveEnquiry_(ss, eoi) {
       var top = (apssYes ? "Heads up: they answered YES to at least one health screening question.\n" : "") +
         "Reply to this email to write straight back to " + name + ".";
       var link = ss.getUrl() + "#gid=" + sheet.getSheetId();
-      MailApp.sendEmail({
+      var mail = {
         to: to,
         replyTo: email,
         subject: "ScoutCo: " + kind + " enquiry from " + name + (pkg && pkg !== "Not sure yet" ? " (" + pkg + ")" : ""),
@@ -3009,7 +3014,9 @@ function saveEnquiry_(ss, eoi) {
           (apssYes ? '<p style="background:#fde8e8;color:#8a1c1c;padding:10px 12px;border-radius:8px"><b>Heads up:</b> they answered yes to at least one health screening question.</p>' : "") +
           '<p style="color:#5f5f5f">Reply to this email to write straight back to ' + esc_(name) + ".</p>" + html.join("") +
           '<p style="margin-top:20px"><a href="' + link + '">Open the ' + tabName + ' tab</a></p></div>'
-      });
+      };
+      if (pdf) mail.attachments = [pdf.getBlob()];
+      MailApp.sendEmail(mail);
       // A short thank you to them, from you.
       MailApp.sendEmail({
         to: email,
@@ -3023,6 +3030,62 @@ function saveEnquiry_(ss, eoi) {
     }
   } catch (err) { /* email is a bonus; the enquiry is already saved */ }
   return { ok: true };
+}
+
+/** Makes "<name> - <date>.pdf" of every answer in ScoutCo enquiries > Online or Face to face, and links it on their row. */
+function enquiryPdf_(sheet, row, name, answers, f2f) {
+  var tz = Session.getScriptTimeZone(), now = new Date();
+  var html = ['<div style="font-family:Arial,sans-serif;font-size:12px;color:#1a1a1a">',
+    '<h1 style="font-size:20px;margin:0 0 4px">' + esc_(name) + '</h1>',
+    '<p style="color:#5f5f5f;margin:0 0 10px">' + (f2f ? "Face-to-face" : "Online") + " coaching enquiry, received " +
+      Utilities.formatDate(now, tz, "d MMMM yyyy, h:mm a") + "</p>"];
+  var section = "";
+  answers.forEach(function (a) {
+    if (!a[2]) return;
+    if (a[0] !== section) {
+      section = a[0];
+      html.push('<h3 style="margin:16px 0 4px;color:#7D4FB3;font-size:13px;text-transform:uppercase">' + esc_(section) + "</h3>");
+    }
+    var flag = /^APSS/.test(a[1]) && a[2] === "Yes";
+    html.push('<p style="margin:3px 0"><b>' + esc_(a[1]) + ":</b> " +
+      (flag ? '<b style="color:#c0262d">Yes</b>' : esc_(a[2]).replace(/\n/g, "<br>")) + "</p>");
+  });
+  html.push("</div>");
+  var fileName = String(name).replace(/[\\\/:*?"<>|]/g, "") + " - " + Utilities.formatDate(now, tz, "yyyy-MM-dd") + ".pdf";
+  var file = enquiryFolder_(f2f).createFile(Utilities.newBlob(html.join(""), "text/html", "enquiry.html").getAs("application/pdf").setName(fileName));
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var lastCol = sheet.getLastColumn();
+    var heads = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    var col = heads.indexOf("PDF") + 1;
+    if (!col) {
+      col = lastCol + 1;
+      sheet.getRange(1, col).setValue("PDF").setFontWeight("bold").setBackground("#ede9fe");
+    }
+    sheet.getRange(row, col).setFormula('=HYPERLINK("' + file.getUrl() + '","Open PDF")');
+  } finally {
+    lock.releaseLock();
+  }
+  return file;
+}
+
+/** ScoutCo enquiries > Online, or ScoutCo enquiries > Face to face, in your Drive (made the first time). Only you can open them. */
+function enquiryFolder_(f2f) {
+  var props = PropertiesService.getScriptProperties();
+  var key = f2f ? "enquiryFolderF2F" : "enquiryFolderOnline";
+  var id = props.getProperty(key);
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(ENQUIRY_FOLDER);
+  var top = found.hasNext() ? found.next() : DriveApp.createFolder(ENQUIRY_FOLDER);
+  var sub = f2f ? "Face to face" : "Online";
+  var inside = top.getFoldersByName(sub);
+  var folder = inside.hasNext() ? inside.next() : top.createFolder(sub);
+  props.setProperty(key, folder.getId());
+  return folder;
 }
 
 function esc_(s) {

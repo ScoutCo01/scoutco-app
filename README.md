@@ -236,4 +236,6 @@ Link to it from the website with a Squarespace Button block. Add `?preview` to t
 
 `face-to-face.html` (https://scoutco01.github.io/scoutco-app/face-to-face.html) is the same idea for the weekly and fortnightly face-to-face packages. It explains how face-to-face coaching works and the two packages, then asks the same questions as the online form plus which package, which days and times suit for studio sessions, and how they'll train between sessions.
 
-Enquiries go on the **Face-to-face enquiries** tab (made on the first one), with the same Status dropdown, notes column and emails. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.
+Enquiries go on the **Face-to-face enquiries** tab (made on the first one), with the same Status dropdown, notes column and emails.
+
+Both forms also save a PDF of every enquiry in your Drive, in **ScoutCo enquiries > Online** or **ScoutCo enquiries > Face to face** (made on the first one). The PDF is linked in a PDF column on the enquiry's row and attached to your email. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.
