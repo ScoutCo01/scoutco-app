@@ -3008,10 +3008,10 @@ function saveEnquiry_(ss, eoi) {
       MailApp.sendEmail({
         to: email,
         replyTo: to,
-        name: "Kirst at ScoutCo",
+        name: "ScoutCo",
         subject: "Thanks for your interest in ScoutCo online coaching",
-        body: "Hi " + name.split(/\s+/)[0] + ",\n\nThanks for filling in the online coaching form. I'll read through your answers and be in touch soon to have a chat about your goals.\n\n" +
-          "If you have any questions in the meantime, just reply to this email.\n\nKirst\nScoutCo\nhttps://www.scoutco.com.au/"
+        body: "Hi " + name.split(/\s+/)[0] + ",\n\nThanks for filling in the online coaching form. We'll read through your answers and be in touch soon to have a chat about your goals.\n\n" +
+          "If you have any questions in the meantime, just reply to this email.\n\nThe ScoutCo team\nhttps://www.scoutco.com.au/"
       });
     }
   } catch (err) { /* email is a bonus; the enquiry is already saved */ }
