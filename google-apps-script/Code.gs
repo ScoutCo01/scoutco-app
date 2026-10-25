@@ -357,6 +357,11 @@ function doPost(e) {
   var body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json_({ error: "Bad request" }); }
   var ss = SpreadsheetApp.getActiveSpreadsheet();
+  // The online coaching expression of interest form on the website (no client code).
+  if (body.eoi) {
+    try { return json_(saveEnquiry_(ss, body.eoi)); }
+    catch (err) { return json_({ error: "Something went wrong. Please try again." }); }
+  }
   var client = findClient_(ss, normalise_(body.code));
   if (!client) return json_({ error: "That code wasn't recognised." });
 
@@ -2913,4 +2918,106 @@ function clearReactionsOnEdit_(e) {
     if (tos && text_(tos[i][0]) === text_(msgs[i][0])) continue; // same message, keep it
     [c.emoji, c.on, c.to].forEach(function (col) { if (col) sheet.getRange(start + i, col).setValue(""); });
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Online coaching enquiries: the expression of interest form          */
+/* (eoi.html). Each one is a row on the "Online enquiries" tab, and    */
+/* Kirst gets an email with all the answers.                           */
+/* ------------------------------------------------------------------ */
+
+var ENQUIRIES_TAB = "Online enquiries";
+var ENQUIRY_STATUSES = ["New", "Contacted", "Chat booked", "Signed up", "Not going ahead"];
+
+function saveEnquiry_(ss, eoi) {
+  if (eoi.website) return { ok: true }; // a spam bot filled in the hidden box
+  var answers = (eoi.answers || []).slice(0, 120).filter(function (a) { return a && a.length >= 3; }).map(function (a) {
+    return [clip_(a[0], 60).trim(), clip_(a[1], 80).trim(), clip_(a[2], 3000).trim()];
+  });
+  var get = function (label) { for (var i = 0; i < answers.length; i++) if (answers[i][1] === label) return answers[i][2]; return ""; };
+  var name = get("Name"), email = get("Email");
+  if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Please fill in your name and email." };
+
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var sheet, row;
+  try {
+    sheet = ss.getSheetByName(ENQUIRIES_TAB);
+    if (!sheet) {
+      sheet = ss.insertSheet(ENQUIRIES_TAB);
+      sheet.getRange(1, 1, 1, 3).setValues([["Received", "Status", "Kirst's notes"]]);
+      styleHeader_(sheet, 3);
+      sheet.setFrozenColumns(3);
+      sheet.setColumnWidth(1, 130).setColumnWidth(2, 130).setColumnWidth(3, 220);
+      sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy h:mm am/pm");
+      sheet.getRange("B2:B").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ENQUIRY_STATUSES, true).setAllowInvalid(true).build());
+    }
+    // One column per question, found by heading. New questions get a new column at the end.
+    var lastCol = Math.max(sheet.getLastColumn(), 3);
+    var heads = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
+    var vals = [new Date(), "New", ""];
+    answers.forEach(function (a) {
+      var at = heads.indexOf(a[1]);
+      if (at < 0) {
+        heads.push(a[1]); at = heads.length - 1;
+        sheet.getRange(1, at + 1).setValue(a[1]).setFontWeight("bold").setBackground("#ede9fe");
+      }
+      vals[at] = a[1] === "Mobile" && a[2] ? "'" + a[2] : cell_(a[2]); // keeps the 0 on the front of a mobile number
+    });
+    for (var i = 0; i < heads.length; i++) if (vals[i] === undefined) vals[i] = "";
+    row = sheet.getLastRow() + 1;
+    sheet.getRange(row, 1, 1, vals.length).setValues([vals]);
+    sheet.getRange(row, 4, 1, Math.max(vals.length - 3, 1)).setWrap(false);
+    SpreadsheetApp.flush();
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Email Kirst every answer, grouped by section.
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (to) {
+      var text = [], html = [], section = "";
+      answers.forEach(function (a) {
+        if (!a[2]) return;
+        if (a[0] !== section) {
+          section = a[0];
+          text.push("\n" + section.toUpperCase());
+          html.push('<h3 style="margin:18px 0 6px;color:#7D4FB3;font-size:15px;text-transform:uppercase;letter-spacing:.05em">' + esc_(section) + "</h3>");
+        }
+        var flag = /^APSS/.test(a[1]) && a[2] === "Yes";
+        text.push(a[1] + ": " + a[2] + (flag ? "  <-- YES" : ""));
+        html.push('<p style="margin:4px 0"><b>' + esc_(a[1]) + ":</b> " +
+          (flag ? '<b style="color:#c0262d">Yes</b>' : esc_(a[2]).replace(/\n/g, "<br>")) + "</p>");
+      });
+      var apssYes = answers.some(function (a) { return /^APSS/.test(a[1]) && a[2] === "Yes"; });
+      var top = (apssYes ? "Heads up: they answered YES to at least one health screening question.\n" : "") +
+        "Reply to this email to write straight back to " + name + ".";
+      var link = ss.getUrl() + "#gid=" + sheet.getSheetId();
+      MailApp.sendEmail({
+        to: to,
+        replyTo: email,
+        subject: "ScoutCo: online coaching enquiry from " + name,
+        body: top + "\n" + text.join("\n") + "\n\nAll enquiries are on the Online enquiries tab:\n" + link,
+        htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a">' +
+          (apssYes ? '<p style="background:#fde8e8;color:#8a1c1c;padding:10px 12px;border-radius:8px"><b>Heads up:</b> they answered yes to at least one health screening question.</p>' : "") +
+          '<p style="color:#5f5f5f">Reply to this email to write straight back to ' + esc_(name) + ".</p>" + html.join("") +
+          '<p style="margin-top:20px"><a href="' + link + '">Open the Online enquiries tab</a></p></div>'
+      });
+      // A short thank you to them, from you.
+      MailApp.sendEmail({
+        to: email,
+        replyTo: to,
+        name: "ScoutCo",
+        subject: "Thanks for your interest in ScoutCo online coaching",
+        body: "Hi " + name.split(/\s+/)[0] + ",\n\nThanks for filling in the online coaching form. We'll read through your answers and be in touch soon to have a chat about your goals.\n\n" +
+          "If you have any questions in the meantime, just reply to this email.\n\nThe ScoutCo team\nhttps://www.scoutco.com.au/"
+      });
+    }
+  } catch (err) { /* email is a bonus; the enquiry is already saved */ }
+  return { ok: true };
+}
+
+function esc_(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
