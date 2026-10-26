@@ -228,7 +228,7 @@ Setup: make a free OneSignal account and a Web app for `https://scoutco01.github
 
 `eoi.html` is a public page (https://scoutco01.github.io/scoutco-app/eoi.html) for people interested in online coaching. It explains how online coaching works and what's included, then asks about the person: contact details, goals, training background, days per week, equipment, 1RMs (squat, bench, deadlift), APSS health screening, injuries and lifestyle.
 
-Answers go to the same Apps Script web app. Each enquiry is a row on the **Online enquiries** tab (made on the first one), with a Status dropdown and a notes column for Kirst. Kirst gets an email with every answer (a red heads-up if any APSS answer is yes; hit Reply to write back to them), and the person gets a short thank-you email.
+Answers go to the same Apps Script web app. Each enquiry is a row on the **Enquiries** tab (shared with the face-to-face form, with a Type column saying Online or Face to face), with a Status dropdown and a notes column for Kirst. Kirst gets an email with every answer (a red heads-up if any APSS answer is yes; hit Reply to write back to them), and the person gets a short thank-you email.
 
 Link to it from the website with a Squarespace Button block. Add `?preview` to the address to try the form without saving anything.
 
@@ -236,6 +236,6 @@ Link to it from the website with a Squarespace Button block. Add `?preview` to t
 
 `face-to-face.html` (https://scoutco01.github.io/scoutco-app/face-to-face.html) is the same idea for the weekly and fortnightly face-to-face packages. It explains how face-to-face coaching works and the two packages, then asks the same questions as the online form plus which package, which days and times suit for studio sessions, and how they'll train between sessions.
 
-Enquiries go on the **Face-to-face enquiries** tab (made on the first one), with the same Status dropdown, notes column and emails.
+Enquiries go on the same **Enquiries** tab as online ones, marked Face to face in the Type column, with the same Status dropdown, notes column and emails. (The first time, the script renames an old Face-to-face enquiries tab to Enquiries and copies in the rows from an old Online enquiries tab, which it renames "Online enquiries (copied to Enquiries)".)
 
 Both forms also save a PDF of every enquiry in your Drive, in **ScoutCo enquiries > Online** or **ScoutCo enquiries > Face to face** (made on the first one). The PDF is linked in a PDF column on the enquiry's row and attached to your email. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.

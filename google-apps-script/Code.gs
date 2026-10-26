@@ -2922,13 +2922,14 @@ function clearReactionsOnEdit_(e) {
 
 /* ------------------------------------------------------------------ */
 /* Coaching enquiries: the expression of interest forms. Online        */
-/* (eoi.html) go on the "Online enquiries" tab, face to face           */
-/* (face-to-face.html) on the "Face-to-face enquiries" tab, and Kirst  */
-/* gets an email with all the answers.                                 */
+/* (eoi.html) and face to face (face-to-face.html) both go on the      */
+/* "Enquiries" tab, with a Type column, and Kirst gets an email with   */
+/* all the answers.                                                    */
 /* ------------------------------------------------------------------ */
 
-var ENQUIRIES_TAB = "Online enquiries";
-var F2F_ENQUIRIES_TAB = "Face-to-face enquiries";
+var ENQUIRIES_TAB = "Enquiries";
+var OLD_ONLINE_TAB = "Online enquiries";      // before 26/10/2026: copied into Enquiries the first time
+var OLD_F2F_TAB = "Face-to-face enquiries";   // before 26/10/2026: renamed to Enquiries
 var ENQUIRY_FOLDER = "ScoutCo enquiries"; // in your Drive, with an "Online" and a "Face to face" folder inside
 var ENQUIRY_STATUSES = ["New", "Contacted", "Chat booked", "Signed up", "Not going ahead"];
 
@@ -2941,7 +2942,8 @@ function saveEnquiry_(ss, eoi) {
   var name = get("Name"), email = get("Email");
   if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Please fill in your name and email." };
   var f2f = /face/i.test(String(eoi.type || ""));
-  var tabName = f2f ? F2F_ENQUIRIES_TAB : ENQUIRIES_TAB;
+  var tabName = ENQUIRIES_TAB;
+  answers.unshift(["About you", "Type", f2f ? "Face to face" : "Online"]);
   var kind = f2f ? "face-to-face coaching" : "online coaching";
   var pkg = get("Package");
 
@@ -2949,16 +2951,7 @@ function saveEnquiry_(ss, eoi) {
   lock.waitLock(20000);
   var sheet, row;
   try {
-    sheet = ss.getSheetByName(tabName);
-    if (!sheet) {
-      sheet = ss.insertSheet(tabName);
-      sheet.getRange(1, 1, 1, 3).setValues([["Received", "Status", "Kirst's notes"]]);
-      styleHeader_(sheet, 3);
-      sheet.setFrozenColumns(3);
-      sheet.setColumnWidth(1, 130).setColumnWidth(2, 130).setColumnWidth(3, 220);
-      sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy h:mm am/pm");
-      sheet.getRange("B2:B").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ENQUIRY_STATUSES, true).setAllowInvalid(true).build());
-    }
+    sheet = enquirySheet_(ss);
     // One column per question, found by heading. New questions get a new column at the end.
     var lastCol = Math.max(sheet.getLastColumn(), 3);
     var heads = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); });
@@ -3030,6 +3023,57 @@ function saveEnquiry_(ss, eoi) {
     }
   } catch (err) { /* email is a bonus; the enquiry is already saved */ }
   return { ok: true };
+}
+
+/** The Enquiries tab. The first time, it takes over the old Face-to-face enquiries tab
+ *  (or makes a new one) and copies in every row from the old Online enquiries tab. */
+function enquirySheet_(ss) {
+  var sheet = ss.getSheetByName(ENQUIRIES_TAB);
+  if (sheet) return sheet;
+  var f2fOld = ss.getSheetByName(OLD_F2F_TAB);
+  if (f2fOld) {
+    sheet = f2fOld.setName(ENQUIRIES_TAB);
+    sheet.insertColumnBefore(4);
+    sheet.getRange(1, 4).setValue("Type").setFontWeight("bold").setBackground("#ede9fe");
+    if (sheet.getLastRow() > 1) sheet.getRange(2, 4, sheet.getLastRow() - 1, 1).setValue("Face to face");
+  } else {
+    sheet = ss.insertSheet(ENQUIRIES_TAB);
+    sheet.getRange(1, 1, 1, 4).setValues([["Received", "Status", "Kirst's notes", "Type"]]);
+    styleHeader_(sheet, 4);
+    sheet.setFrozenColumns(3);
+    sheet.setColumnWidth(1, 130).setColumnWidth(2, 130).setColumnWidth(3, 220);
+    sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy h:mm am/pm");
+    sheet.getRange("B2:B").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(ENQUIRY_STATUSES, true).setAllowInvalid(true).build());
+  }
+  var old = ss.getSheetByName(OLD_ONLINE_TAB);
+  if (old && old.getLastRow() > 1) {
+    var oc = old.getLastColumn(), on = old.getLastRow() - 1;
+    var oldHeads = old.getRange(1, 1, 1, oc).getValues()[0].map(function (h) { return String(h).trim(); });
+    var oldVals = old.getRange(2, 1, on, oc).getValues(), oldForms = old.getRange(2, 1, on, oc).getFormulas();
+    var heads = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 4)).getValues()[0].map(function (h) { return String(h).trim(); });
+    var rows = oldVals.map(function (r, i) {
+      var out = [];
+      out[heads.indexOf("Type")] = "Online";
+      oldHeads.forEach(function (h, c) {
+        if (!h) return;
+        var at = heads.indexOf(h);
+        if (at < 0) {
+          heads.push(h); at = heads.length - 1;
+          sheet.getRange(1, at + 1).setValue(h).setFontWeight("bold").setBackground("#ede9fe");
+        }
+        var v = oldForms[i][c] || r[c];
+        out[at] = h === "Mobile" && v !== "" ? "'" + v : v;
+      });
+      return out;
+    });
+    rows = rows.map(function (r) { for (var i = 0; i < heads.length; i++) if (r[i] === undefined) r[i] = ""; return r.slice(0, heads.length); });
+    var start = sheet.getLastRow() + 1;
+    sheet.getRange(start, 1, rows.length, heads.length).setValues(rows);
+    sheet.getRange(start, 4, rows.length, heads.length - 3).setWrap(false);
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).sort(1); // oldest first
+    old.setName(OLD_ONLINE_TAB + " (copied to Enquiries)");
+  }
+  return sheet;
 }
 
 /** Makes "<name> - <date>.pdf" of every answer in ScoutCo enquiries > Online or Face to face, and links it on their row. */
