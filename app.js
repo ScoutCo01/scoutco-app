@@ -1915,7 +1915,7 @@
     var payment = [
       "The price is for the whole 12-week service" + (online ? "" : ", not per session") + ". Paying weekly or fortnightly is just a convenience.",
       "Upfront: you'll get an invoice for the full block at the start, paid by bank transfer.",
-      "Weekly or fortnightly: an equal share of the block price is charged automatically through Acuity (payments processed by Stripe).",
+      "Weekly or fortnightly: an equal share of the block price is charged automatically to your card (payments processed by Stripe).",
       online ? "Payments are due for the whole block whether or not you complete every session or check-in."
         : "You pay for every session in the block whether you attend or not. Missed sessions aren't refunded or credited.",
       online ? "No refunds for change of mind once a block has started. Refunds are only given when " + COACH + " can't deliver the service, or as Australian Consumer Law requires."
@@ -1925,7 +1925,8 @@
     ];
     var terms = online ? [
       ["What you get", [
-        "A 12-week block of online strength and conditioning coaching.",
+        /foundation/i.test(String(a.type || "")) ? "Online Coaching (Foundation): a 12-week block of online strength and conditioning coaching at a special offer price."
+          : "A 12-week block of online strength and conditioning coaching.",
         "A training program written for you, delivered through the ScoutCo app.",
         "A weekly check-in in the app, with a reply from " + COACH + ".",
         "Form-check feedback on videos you send through the app.",
