@@ -2490,8 +2490,8 @@ var AGREEMENT_HEADERS = ["Client", "Agreement", "Start date", "Session day and t
   "Send to app", "Status", "Signed by", "Signed on", "Photos and videos", "Parent or guardian", "Relationship",
   "Parent phone and email", "Emergency contact", "Copy of agreement", "PDF", "ID"];
 var AGREEMENT_FOLDER = "ScoutCo agreements";
-var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online"];
-var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity"];
+var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online", "Online Coaching (Foundation)"];
+var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity", "Weekly via Stripe link"];
 
 /** ScoutCo menu → Set up agreements. Safe to run again: it only adds what's missing. */
 function setupAgreements() {
