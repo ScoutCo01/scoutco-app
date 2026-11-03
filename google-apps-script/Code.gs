@@ -23,6 +23,9 @@
  *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Renewals: a notice before each client's next block. Tick "Send to app" and they see it in their app
+ *   Class workouts: Class | Date | Workout | Type | Main muscle groups | Notes for the class. Group class members (Clients Type "Lift Club"
+ *               or "Jr Lift Club") see these in their app instead of a program (ScoutCo → Set up group classes)
+ *   Class feedback: filled in by the app when class members react to or comment on a week's workout
  *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements).
  *               Each signed agreement is also saved as a PDF in the "ScoutCo agreements" folder in your Drive
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
@@ -80,13 +83,15 @@ function doGet(e) {
 
   try { recordOpen_(ss, code); } catch (err) { /* the program still loads */ }
 
-  var programName = String(client.Program || client.Name || "").trim();
-  var rows = readTab_(ss, PROGRAMS_TAB).filter(function (r) {
+  // Group class members (Lift Club, Jr Lift Club) get the weekly class workouts instead of a program.
+  var inClass = isClass_(client.Type);
+  var programName = inClass ? className_(client) : String(client.Program || client.Name || "").trim();
+  var rows = inClass ? [] : readTab_(ss, PROGRAMS_TAB).filter(function (r) {
     return String(r.Program).trim().toLowerCase() === programName.toLowerCase() && String(r.Exercise).trim() !== "";
   });
 
-  var blocks = addStartDates_(ss, programName, groupBlocks_(rows));
-  if (!isCoach_(client.Type)) {
+  var blocks = inClass ? [] : addStartDates_(ss, programName, groupBlocks_(rows));
+  if (!isCoach_(client.Type) && !inClass) {
     try { addHomeSwaps_(ss, blocks); } catch (err) { /* the program still loads, just without swaps */ }
     try { addDemoLinks_(blocks); } catch (err) { /* not essential */ }
   }
@@ -95,6 +100,7 @@ function doGet(e) {
     client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || ""),
       reaction: reactionFor_(client), reactions: MESSAGE_REACTIONS },
     program: { name: programName, blocks: blocks },
+    classWorkouts: inClass ? safely_(function () { return classFor_(ss, client, code); }, { name: programName, weeks: [], reactions: [] }) : undefined,
     weights: weightsFor_(ss, code),
     ticks: ticksFor_(ss, code),
     swaps: swapsFor_(ss, code),
@@ -372,7 +378,7 @@ function doPost(e) {
   }
 
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [], signed = [];
+  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [], signed = [], classNotes = [], classCache = {};
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -466,6 +472,9 @@ function doPost(e) {
         if (!isCoach_(client.Type)) saveRenewalSeen_(ss, client, ev);
       } else if (ev.type === "pb") {
         if (!isCoach_(client.Type)) savePb_(ss, client, ev);
+      } else if (ev.type === "classreact") {
+        var cr = saveClassReaction_(ss, client, ev, classCache);
+        if (cr) classNotes.push(cr);
       } else if (ev.type === "msgreact") {
         if (!isCoach_(client.Type)) saveMessageReaction_(ss, client, ev);
       } else if (ev.type === "videoreply" || ev.type === "videohide") {
@@ -490,6 +499,7 @@ function doPost(e) {
 
   if (comments.length) notify_(ss, client, comments);
   if (checkins.length) notifyCheckin_(ss, client, checkins);
+  if (classNotes.length) notifyClass_(ss, client, classNotes);
   if (signed.length) notifyAgreement_(ss, signed);
   if (posted.length) notifyCommunity_(ss, client, posted);
   if (posted.length) safely_(function () { pushCommunity_(ss, client, posted); }, null);
@@ -682,6 +692,7 @@ function onOpen() {
     .addItem("Send me a test notification", "testPush")
     .addItem("Set up videos", "setupVideos")
     .addItem("Set up agreements", "setupAgreements")
+    .addItem("Set up group classes", "setupClasses")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -802,6 +813,7 @@ function weeksLeftRows_(ss) {
   var rows = [];
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
     if (isOff_(c.Active) || String(c.Code).trim() === "") return;
+    if (isClass_(c.Type)) return; // group class members have no written program
     var name = String(c.Name || "").trim();
     var code = normalise_(c.Code);
     var opened = String(c["Last opened"] || "").trim() || "Not yet";
@@ -982,6 +994,7 @@ function sendSummary_() {
     { title: "Online clients", online: true, quiet: [], rebook: [], setup: [], table: [], noCheckin: [], reply: [], low: [] }
   ];
   clients.forEach(function (c) {
+    if (isClass_(c.Type)) return; // group class members are in the class feedback list instead
     var code = normalise_(c.Code), st = stats[code], p = plan[code] || {};
     var g = groups[isOnline_(c.Type) ? 1 : 0];
     var name = String(c.Name || c.Code).trim();
@@ -1022,6 +1035,9 @@ function sendSummary_() {
       return r.name + ": next block starts " + fmt(r.start) + ", send by " + fmt(r.sendBy) + (r.sendBy < now ? " (due now)" : "");
     });
   } catch (err) { /* summary still useful */ }
+
+  var classFeedback = [];
+  try { classFeedback = classFeedbackSummary_(ss, since); } catch (err) { /* summary still useful */ }
 
   var count = function (k) { return groups.reduce(function (n, g) { return n + (g[k] ? g[k].length : 0); }, 0); };
   var to = Session.getEffectiveUser().getEmail();
@@ -1068,6 +1084,7 @@ function sendSummary_() {
     list("🏆 PBs this week", "New 1RMs logged in the app.", celebrate.pbs, "#047857") +
     list("🎂 Birthdays coming up", "In the next 7 days (from the Profiles tab).", celebrate.birthdays, "#7c3aed") +
     groups.map(section).join("") +
+    list("💬 Group class feedback", "Reactions and comments on class workouts in the last 7 days (Class feedback tab).", classFeedback, "#7c3aed") +
     '<p style="margin-top:22px"><a href="' + h(ss.getUrl()) + '">Open the ScoutCo sheet</a> for every tick, comment, weight and check-in.</p>' +
     '<p style="color:#9ca3af;font-size:12px">Clients whose Type on the Clients tab says "Online" are in the online section. ' +
     "Sent every Monday. To stop it: ScoutCo menu → Turn off Monday email.</p></div>";
@@ -1088,7 +1105,7 @@ function sendSummary_() {
           return "- " + r.name + ": " + plural_(r.sessions, "session") + ", " + plural_(r.ticks, "exercise") + (r.home ? " (" + r.home + " swapped for home)" : "") + ", " + plural_(r.comments, "comment") +
             (r.lifts.length ? ". Weights: " + r.lifts.join(", ") : "") + (g.online ? ". Check-in: " + r.pulse : "");
         }).join("\n") + "\n\n";
-    }).join("") + ss.getUrl();
+    }).join("") + block("GROUP CLASS FEEDBACK", classFeedback) + ss.getUrl();
 
   MailApp.sendEmail({ to: to, subject: subject, body: text, htmlBody: html });
   return to;
@@ -2490,8 +2507,9 @@ var AGREEMENT_HEADERS = ["Client", "Agreement", "Start date", "Session day and t
   "Send to app", "Status", "Signed by", "Signed on", "Photos and videos", "Parent or guardian", "Relationship",
   "Parent phone and email", "Emergency contact", "Copy of agreement", "PDF", "ID"];
 var AGREEMENT_FOLDER = "ScoutCo agreements";
-var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online", "Online Coaching (Foundation)"];
-var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity", "Weekly via Stripe link"];
+var AGREEMENT_TYPES = ["Face to face weekly", "Face to face fortnightly", "Online", "Online Coaching (Foundation)", "Lift Club", "Jr Lift Club"];
+var AGREEMENT_PAYMENTS = ["Upfront invoice (bank transfer)", "Weekly via Acuity", "Fortnightly via Acuity", "Monthly via Acuity",
+  "Weekly via Stripe link", "Fortnightly via Stripe link", "Monthly via Stripe link"];
 
 /** ScoutCo menu → Set up agreements. Safe to run again: it only adds what's missing. */
 function setupAgreements() {
@@ -2503,6 +2521,7 @@ function setupAgreements() {
     styleHeader_(sheet, AGREEMENT_HEADERS.length);
   }
   var n = sheet.getMaxRows() - 1;
+  agreementLists_(sheet);
   var clients = ss.getSheetByName(CLIENTS_TAB);
   if (clients) {
     var nameCol = clients.getRange(1, 1, 1, clients.getLastColumn()).getValues()[0]
@@ -2510,11 +2529,8 @@ function setupAgreements() {
     if (nameCol) sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
       .requireValueInRange(clients.getRange(2, nameCol, clients.getMaxRows() - 1, 1), true).setAllowInvalid(true).build());
   }
-  var list = function (vals) { return SpreadsheetApp.newDataValidation().requireValueInList(vals, true).setAllowInvalid(true).build(); };
-  sheet.getRange(2, 2, n, 1).setDataValidation(list(AGREEMENT_TYPES));
   sheet.getRange(2, 3, n, 1).setNumberFormat("dd/mm/yyyy");
-  sheet.getRange(2, 6, n, 1).setDataValidation(list(AGREEMENT_PAYMENTS));
-  sheet.getRange(2, 7, n, 1).setDataValidation(list(["No", "Yes"]));
+  sheet.getRange(2, 7, n, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(["No", "Yes"], true).setAllowInvalid(true).build());
   sheet.getRange(2, 8, n, 1).insertCheckboxes();
   sheet.getRange(2, 9, n, AGREEMENT_HEADERS.length - 8).setBackground("#f3f4f6");
   sheet.getRange(2, 11, n, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
@@ -2530,6 +2546,14 @@ function setupAgreements() {
     "Clients only sign once. It carries over each time their block renews.\n\n" +
     "Renewals: about 3 weeks before a client's block ends, add a row on the Renewals tab (client, next block start date, session time, price, payment) and tick \"Send to app\". " +
     "They see \"Your next block is coming up\" with the details and the date to tell you if they want to stop, and tap Got it. Nothing to sign.");
+}
+
+/** The Agreement type and Payment drop-downs on the Agreements tab. */
+function agreementLists_(sheet) {
+  var n = Math.max(sheet.getMaxRows() - 1, 1);
+  var list = function (vals) { return SpreadsheetApp.newDataValidation().requireValueInList(vals, true).setAllowInvalid(true).build(); };
+  sheet.getRange(2, 2, n, 1).setDataValidation(list(AGREEMENT_TYPES));
+  sheet.getRange(2, 6, n, 1).setDataValidation(list(AGREEMENT_PAYMENTS));
 }
 
 /** The columns of the Agreements tab, found by heading so you can move them around. */
@@ -3134,4 +3158,152 @@ function enquiryFolder_(f2f) {
 
 function esc_(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/* ------------------------------------------------------------------ */
+/* Group classes (Lift Club, Jr Lift Club): class members don't get a  */
+/* program. They see the workout name for each week and react to it.   */
+/* ------------------------------------------------------------------ */
+
+var CLASS_WORKOUTS_TAB = "Class workouts";
+var CLASS_WORKOUT_HEADERS = ["Class", "Date", "Workout", "Type", "Main muscle groups", "Notes for the class"];
+var CLASS_FEEDBACK_TAB = "Class feedback";
+var CLASS_FEEDBACK_HEADERS = ["Updated", "Class", "Class date", "Workout", "Client", "Reaction", "Comment", "Key"];
+var CLASS_NAMES = ["Lift Club", "Jr Lift Club"];
+// What class members can tap after a workout. Kept in step with CLASS_REACTIONS in app.js.
+var CLASS_REACTIONS = [["🔥", "Loved it"], ["💪", "Just right"], ["🥵", "Tough"], ["😎", "Too easy"]];
+
+/** A Clients row whose Type says "Lift Club" or "Class" (e.g. "Jr Lift Club") is a group class member. */
+function isClass_(type) { return /lift club|\bclass\b/i.test(String(type || "")) && !isCoach_(type); }
+
+/** Which class they're in: the Program column if it's filled in, otherwise their Type. */
+function className_(client) {
+  return String(client.Program || "").trim() || String(client.Type || "").trim();
+}
+
+function classKey_(s) { return String(s || "").trim().toLowerCase().replace(/\s+/g, " "); }
+
+/** The workouts written for one class, oldest first: [{ key, start (the class date, yyyy-MM-dd), workout, type, muscles, notes }]. */
+function classWorkouts_(ss, name) {
+  var tz = ss.getSpreadsheetTimeZone(), want = classKey_(name), out = [], perWeek = {};
+  readTab_(ss, CLASS_WORKOUTS_TAB).forEach(function (r) {
+    if (classKey_(r.Class) !== want) return;
+    var workout = text_(r.Workout), d = toDate_(r.Date || r["Week starting"]);
+    if (!workout || !d) return;
+    var start = Utilities.formatDate(d, tz, "yyyy-MM-dd");
+    var n = perWeek[start] = (perWeek[start] || 0) + 1;
+    out.push({ key: start + (n > 1 ? "#" + n : ""), start: start, workout: workout, type: text_(r.Type),
+      muscles: text_(r["Main muscle groups"]), notes: text_(r["Notes for the class"]) });
+  });
+  return out.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
+}
+
+/** What a class member's app gets: the weekly workouts, everyone's reaction counts, and their own reaction and comment. */
+function classFor_(ss, client, code) {
+  var name = className_(client);
+  var weeks = classWorkouts_(ss, name);
+  var counts = {}, mine = {}, prefix = normalise_(code) + "|";
+  rowsOf_(ss, CLASS_FEEDBACK_TAB, CLASS_FEEDBACK_HEADERS.length).forEach(function (r) {
+    if (classKey_(r[1]) !== classKey_(name)) return;
+    var key = String(r[7]), wk = key.split("|").slice(2).join("|"), emoji = text_(r[5]);
+    if (emoji) { var c = counts[wk] = counts[wk] || {}; c[emoji] = (c[emoji] || 0) + 1; }
+    if (key.indexOf(prefix) === 0) mine[wk] = { emoji: emoji, comment: text_(r[6]) };
+  });
+  weeks.forEach(function (w) { w.counts = counts[w.key] || {}; w.mine = mine[w.key] || null; });
+  return { name: name, weeks: weeks, reactions: CLASS_REACTIONS.map(function (x) { return { emoji: x[0], label: x[1] }; }) };
+}
+
+/** Saves a class member's reaction and comment on a week's workout (one row per person per workout). Returns what to email you, or null. */
+function saveClassReaction_(ss, client, ev, cache) {
+  if (!isClass_(client.Type)) return null;
+  var name = className_(client);
+  var wk = clip_(ev.key, 40);
+  var w = classWorkouts_(ss, name).filter(function (x) { return x.key === wk; })[0];
+  if (!w) return null;
+  var emoji = CLASS_REACTIONS.some(function (x) { return x[0] === ev.emoji; }) ? ev.emoji : "";
+  var comment = clip_(ev.comment, 2000).trim();
+  if (!cache.sheet) {
+    cache.sheet = classFeedbackTab_(ss);
+    cache.keys = cache.sheet.getRange(1, 8, Math.max(cache.sheet.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
+  }
+  var key = normalise_(client.Code) + "|" + classKey_(name) + "|" + wk;
+  var at = cache.keys.indexOf(key);
+  var before = at > 0 ? text_(cache.sheet.getRange(at + 1, 7).getValue()) : "";
+  var row = [new Date(), cell_(name), Utilities.parseDate(w.start, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd"), cell_(w.workout),
+    cell_(client.Name || client.Code), emoji, cell_(comment), key];
+  if (!emoji && !comment) {
+    if (at > 0) cache.sheet.getRange(at + 1, 6, 1, 2).clearContent(); // took their reaction off
+    return null;
+  }
+  if (at > 0) cache.sheet.getRange(at + 1, 1, 1, row.length).setValues([row]);
+  else { cache.sheet.appendRow(row); cache.keys.push(key); }
+  return comment && comment !== before ? { cls: name, workout: w.workout, start: w.start, emoji: emoji, comment: comment } : null;
+}
+
+/** Emails you when a class member writes a comment on a workout. */
+function notifyClass_(ss, client, items) {
+  try {
+    var to = Session.getEffectiveUser().getEmail();
+    if (!to) return;
+    var lines = items.map(function (c) {
+      return c.cls + " · " + c.workout + " (" + c.start + ")" + (c.emoji ? " " + c.emoji : "") + "\n" + c.comment;
+    });
+    MailApp.sendEmail(to, "ScoutCo: class feedback from " + (client.Name || "a class member"),
+      lines.join("\n\n") + "\n\nAll class feedback is on the Class feedback tab:\n" + ss.getUrl());
+  } catch (err) { /* email is a bonus; the feedback is already saved */ }
+}
+
+function classFeedbackTab_(ss) {
+  var sheet = tab_(ss, CLASS_FEEDBACK_TAB, CLASS_FEEDBACK_HEADERS);
+  sheet.getRange("A2:A").setNumberFormat("dd/mm/yyyy");
+  sheet.getRange("C2:C").setNumberFormat("dd/mm/yyyy");
+  return sheet;
+}
+
+/** Last 7 days of class feedback for the Monday email: one line per workout, plus each comment. */
+function classFeedbackSummary_(ss, since) {
+  var tz = ss.getSpreadsheetTimeZone(), byWorkout = {}, order = [];
+  rowsOf_(ss, CLASS_FEEDBACK_TAB, CLASS_FEEDBACK_HEADERS.length).forEach(function (r) {
+    if (!(r[0] instanceof Date) || r[0] < since) return;
+    var start = r[2] instanceof Date ? Utilities.formatDate(r[2], tz, "d MMM") : text_(r[2]);
+    var k = text_(r[1]) + " · " + text_(r[3]) + " (" + start + ")";
+    if (!byWorkout[k]) { byWorkout[k] = { counts: {}, comments: [] }; order.push(k); }
+    var emoji = text_(r[5]), comment = text_(r[6]);
+    if (emoji) byWorkout[k].counts[emoji] = (byWorkout[k].counts[emoji] || 0) + 1;
+    if (comment) byWorkout[k].comments.push(text_(r[4]) + ': "' + clip_(comment, 200) + '"');
+  });
+  return order.map(function (k) {
+    var c = byWorkout[k].counts;
+    var tally = Object.keys(c).map(function (e) { return e + " " + c[e]; }).join("  ");
+    return k + (tally ? ": " + tally : "") + (byWorkout[k].comments.length ? ". " + byWorkout[k].comments.join(" ") : "");
+  });
+}
+
+/** ScoutCo menu → Set up group classes. Safe to run again: it only adds what's missing. */
+function setupClasses() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(CLASS_WORKOUTS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(CLASS_WORKOUTS_TAB);
+    sheet.getRange(1, 1, 1, CLASS_WORKOUT_HEADERS.length).setValues([CLASS_WORKOUT_HEADERS]);
+    styleHeader_(sheet, CLASS_WORKOUT_HEADERS.length);
+    sheet.setColumnWidth(1, 140).setColumnWidth(2, 120).setColumnWidth(3, 200).setColumnWidth(4, 140).setColumnWidth(5, 220).setColumnWidth(6, 340);
+    sheet.setFrozenRows(1);
+  }
+  var n = Math.max(sheet.getMaxRows() - 1, 1);
+  sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(CLASS_NAMES, true).setAllowInvalid(true).build());
+  sheet.getRange(2, 2, n, 1).setNumberFormat("dd/mm/yyyy");
+  sheet.getRange(1, 2).setNote("The date of the class, e.g. 10/11/2026. Class members can react to the workout from that day on.");
+  classFeedbackTab_(ss).setColumnWidth(4, 220).setColumnWidth(7, 380);
+  // The class agreement types and payment options on the Agreements tab.
+  var ag = ss.getSheetByName(AGREEMENTS_TAB);
+  if (ag) { agreementLists_(ag); setupRenewals_(ss); }
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Done! To set up a group class member:\n\n" +
+    "1. Clients tab: add them with ScoutCo → Add a new client, then type \"Lift Club\" or \"Jr Lift Club\" in their Type column and clear their Program column. " +
+    "Put the class day and time in their Sessions column (e.g. Wednesdays 5pm).\n\n" +
+    "2. Class workouts tab: one row per class. Pick the class, type the date (e.g. 10/11/2026), the workout name (e.g. Bronco), the type (e.g. Tabata) and the main muscle groups (e.g. Quads and hamstrings). Notes are optional.\n\n" +
+    "Class members see this week's workout at the top of their app, and the other weeks underneath. From the day of the class, they can tap a reaction and leave a comment. " +
+    "Everything lands on the Class feedback tab, and you get an email when someone writes a comment.\n\n" +
+    "3. Agreements: pick \"Lift Club\" or \"Jr Lift Club\" as the agreement type, and $240 as the price per block.");
 }

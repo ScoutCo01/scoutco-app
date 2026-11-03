@@ -239,3 +239,15 @@ Link to it from the website with a Squarespace Button block. Add `?preview` to t
 Enquiries go on the same **Enquiries** tab as online ones, marked Face to face in the Type column, with the same Status dropdown, notes column and emails. (The first time, the script renames an old Face-to-face enquiries tab to Enquiries and copies in the rows from an old Online enquiries tab, which it renames "Online enquiries (copied to Enquiries)".)
 
 Both forms also save a PDF of every enquiry in your Drive, in **ScoutCo enquiries > Online** or **ScoutCo enquiries > Face to face** (made on the first one). The PDF is linked in a PDF column on the enquiry's row and attached to your email. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.
+
+## Group classes (Lift Club, Jr Lift Club)
+
+Class members pay for the class only, so they don't get a program, progress or videos. They get a **Workouts** tab, the Lift Club Community, their Profile, their Agreement and ScoutCo HQ.
+
+1. ScoutCo menu → **Set up group classes** (adds the Class workouts and Class feedback tabs, and the class options on the Agreements tab).
+2. Clients tab: add the person, type `Lift Club` or `Jr Lift Club` in **Type**, leave **Program** blank, and put the class time in **Sessions**.
+3. Class workouts tab: one row per class: Class, Date (e.g. 10/11/2026), Workout (e.g. Bronco), Type (e.g. Tabata), Main muscle groups (e.g. Quads and hamstrings), optional Notes for the class.
+
+From the day of the class, class members tap a reaction (🔥 Loved it, 💪 Just right, 🥵 Tough, 😎 Too easy) and can leave a comment only Kirst sees. Everyone in the class sees the reaction counts. Feedback lands on the Class feedback tab, comments are emailed to you, and the Monday email has a Group class feedback list. Try it with the code `DEMO-CLASS`.
+
+Agreements: pick `Lift Club` or `Jr Lift Club` as the type, `$240` as the price per block, and a payment option (upfront invoice, or weekly, fortnightly or monthly via Acuity or Stripe). The agreement shows the split amounts ($20 a week, $40 a fortnight, $80 a month). Tick Under 18 for Jr Lift Club so a parent signs too.
