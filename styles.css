@@ -547,3 +547,22 @@ button.comm-avatar { cursor: pointer; }
 .ci-closed p { margin: 0; }
 .ci-closed-icon { font-size: 40px; }
 .ci-call { display: block; text-align: center; margin-top: 10px; }
+
+/* Group class workouts (Lift Club, Jr Lift Club) */
+.class-workout.this-week { border-color: var(--accent); }
+.class-workout h2 { margin: 4px 0 6px; font-size: 22px; }
+.class-workout h3 { margin: 4px 0 6px; }
+.class-when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.class-tag { background: var(--accent); color: var(--accent-ink); border-radius: 999px; padding: 2px 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.class-notes { margin: 0 0 10px; white-space: pre-wrap; }
+.class-react { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.class-react-q { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.class-react-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.class-react-btn { padding: 8px 12px; }
+.class-react-note { margin: 8px 0 6px; }
+.class-comment { padding: 6px 0 0; border-top: 0; }
+.class-comment .comment-actions { align-items: center; gap: 8px; }
+.class-comment .comment-actions .small { flex: 1; }
+.class-list { list-style: none; margin: 0; padding: 0; }
+.class-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
+.class-list small { flex: 0 0 auto; }

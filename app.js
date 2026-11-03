@@ -22,6 +22,7 @@
   var KEY_AGREE = "scoutco.agreeSigned";
   var KEY_RENEW = "scoutco.renewSeen";
   var KEY_MSG_REACT = "scoutco.msgReact";
+  var KEY_CLASS_REACT = "scoutco.classReact"; // class members' reactions not yet back from the sheet: { "<code>|<week key>": { emoji, comment } }
 
   var COACH = String(CONFIG.coachName || "Kirst");
 
@@ -30,7 +31,7 @@
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
       view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
       commDraft: "", commPhoto: null, commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
-      upload: null, playing: null, ag: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "" };
+      upload: null, playing: null, ag: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "", classOpen: null, classDrafts: {} };
   }
   var state = freshState();
 
@@ -68,11 +69,11 @@
 
   // ---------- fetching ----------
   function fetchProgram(code) {
-    if (code === "DEMO" || !CONFIG.apiUrl) {
-      if (code !== "DEMO") {
+    if (code === "DEMO" || code === "DEMO-CLASS" || !CONFIG.apiUrl) {
+      if (code !== "DEMO" && code !== "DEMO-CLASS") {
         return Promise.reject(new Error("The app isn't connected to the program sheet yet. Try the code DEMO."));
       }
-      return Promise.resolve(demoData());
+      return Promise.resolve(code === "DEMO-CLASS" ? demoClassData() : demoData());
     }
     var url = CONFIG.apiUrl + (CONFIG.apiUrl.indexOf("?") === -1 ? "?" : "&") +
       "code=" + encodeURIComponent(code) + "&t=" + Date.now();
@@ -135,6 +136,7 @@
     mergeCheckins(data && data.checkins);
     mergeTodos(data && data.todos);
     mergeProfile(data);
+    mergeClass();
     if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
     if (!offline) save(KEY_CACHE, { code: state.code, data: data });
     var blocks = getBlocks(data);
@@ -198,12 +200,12 @@
   // Events wait in an outbox until the sheet confirms it saved them, so nothing is lost offline.
   var flushing = false;
   function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
-  function canSend() { return CONFIG.apiUrl && state.code && state.code !== "DEMO"; }
+  function canSend() { return CONFIG.apiUrl && state.code && state.code !== "DEMO" && state.code !== "DEMO-CLASS"; }
   function queue(ev) {
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal" || ev.type === "msgreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal" || ev.type === "msgreact" || ev.type === "classreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -396,6 +398,14 @@
   }
   function bookingUrl() { return safeUrl(((state.data && state.data.settings) || {}).bookingUrl); }
 
+  // ---------- group classes ----------
+  // Clients whose Type says "Lift Club" or "Class" (Lift Club, Jr Lift Club) don't get a program.
+  // They see the workout Kirst wrote for each week and react to it afterwards.
+  function isClass() {
+    var c = (state.data && state.data.client) || {};
+    return /lift club|\bclass\b/i.test(String(c.type || "")) && !isCoach();
+  }
+
   // ---------- weeks on the calendar (Monday to Sunday) ----------
   function mondayOf(d) { var x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); return addDays(x, -((x.getDay() + 6) % 7)); }
   function isoDay(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
@@ -528,7 +538,10 @@
   function viewList() {
     var v;
     if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"]];
-    else {
+    else if (isClass()) {
+      v = [["program", "Workouts"], ["community", "Lift Club Community"], ["profile", "Profile"]];
+      if (agreement()) v.push(["agreement", "Agreement"]);
+    } else {
       v = [["program", "Program"]];
       if (isOnline()) v.push(["checkin", "Check-in"]);
       v.push(["progress", "Progress"]);
@@ -887,6 +900,7 @@
   function profileNeedsFilling() {
     var p = getProfile();
     if (isCoach()) return !p.photo || !String(p.about || "").trim();
+    if (isClass()) return !p.dob || !String(p.goals || "").trim();
     return !p.dob || !String(p.goals || "").trim() || !LIFTS.some(function (l) { return kgOf(p[l.id]); });
   }
 
@@ -1271,7 +1285,7 @@
   function saveCommStore(s) { save(KEY_COMMUNITY, s); }
   function fetchCommunity() {
     if (commLoading || !state.code) return;
-    if (state.code === "DEMO" || !CONFIG.apiUrl) {
+    if (state.code === "DEMO" || state.code === "DEMO-CLASS" || !CONFIG.apiUrl) {
       var d = commStore(); d.feed = demoCommunity(); saveCommStore(d);
       if (state.view === "community") render();
       return;
@@ -1885,7 +1899,7 @@
       return;
     }
     el.innerHTML = "<div><strong>Tell " + esc(COACH) + " about you</strong>" +
-      "<div>Add a photo, your 1RMs, goals and favourite food. Takes 2 minutes.</div></div>" +
+      "<div>Add a photo, " + (isClass() ? "" : "your 1RMs, ") + "goals and favourite food. Takes 2 minutes.</div></div>" +
       '<button class="btn primary" data-goto-profile>Fill in my profile</button>';
   }
 
@@ -1901,8 +1915,18 @@
   function agreementSigned() { var a = agreement(); return !!(a && (a.signed || localSigned())); }
   function agreementDue() { return !!agreement() && !agreementSigned(); }
   function agOnline(a) { return /online/i.test(String(a.type || "")); }
+  // Lift Club and Jr Lift Club: small group classes, no program.
+  function agClass(a) { return !agOnline(a) && /lift club|class/i.test(String(a.type || "")); }
+  // "$240" → "$20 a week, $40 a fortnight or $80 a month", for a 12-week block.
+  function agShares(a) {
+    var n = parseFloat(String(a.price || "").replace(/[^0-9.]/g, ""));
+    if (!(n > 0)) return "";
+    var money = function (x) { return "$" + (Math.round(x * 100) / 100).toFixed(2).replace(/\.00$/, ""); };
+    return " (" + money(n / 12) + " a week, " + money(n / 6) + " a fortnight, or " + money(n / 3) + " a month)";
+  }
 
   function agreementTerms(a) {
+    if (agClass(a)) return classTerms(a);
     var online = agOnline(a);
     var renewal = [
       "You sign up for one 12-week block at a time.",
@@ -1968,6 +1992,51 @@
       "Nothing in this agreement limits your rights under the Australian Consumer Law. This agreement is governed by Queensland law."]]);
     return terms;
   }
+  // Group class agreement (Lift Club, Jr Lift Club): the class only, no written program.
+  function classTerms(a) {
+    var cls = /jr|junior/i.test(String(a.type || "")) ? "Jr Lift Club" : "Lift Club";
+    var terms = [
+      ["What you get", [
+        "A 12-week block of " + cls + ", a small group strength training class coached by " + COACH + ", once a week at your set day and time" +
+          (cls === "Jr Lift Club" ? " (for ages 12 to 16)" : "") + ".",
+        "You're paying for the class only. There's no individual training program.",
+        "Each week's workout is shown in the ScoutCo app, where you can react to it and leave feedback for " + COACH + " afterwards.",
+        "Access to the Lift Club Community in the app."]],
+      ["Your 12-week block and renewal", [
+        "You sign up for one 12-week block at a time.",
+        "Your place renews automatically for another 12-week block at the end of each block, unless you or " + COACH + " ends it.",
+        "You only sign this agreement once. It carries over to every new block, so you don't need to sign again.",
+        "About 3 weeks before each block ends, " + COACH + " will send you a renewal notice with your next block's start date, class time, price and payment details. " +
+          "Anything new in it applies from the next block. Price changes always come with at least 4 weeks' notice.",
+        "If you don't want to renew, tell " + COACH + " at least 2 weeks before your block ends."]],
+      ["Your class", [
+        "Your place in the class is held for you for the whole block.",
+        "If you can't make a class, let " + COACH + " know as early as you can. You may be able to join another class that week if there's space, but it isn't guaranteed.",
+        "If " + COACH + " cancels a class, it will be rescheduled, or refunded pro-rata if it can't be."]],
+      ["Payment", [
+        "The price is for the whole 12-week block, not per class.",
+        "Upfront: you'll get an invoice for the full block at the start, paid by bank transfer.",
+        "Weekly, fortnightly or monthly: the block price is split into equal payments" + agShares(a) + ", charged automatically to your card through Stripe or Acuity.",
+        "You pay for every class in the block whether you attend or not. Missed classes aren't refunded or credited.",
+        "No refunds for change of mind once a block has started. Refunds are only given when " + COACH + " cancels and can't reschedule, or as Australian Consumer Law requires.",
+        "If a payment doesn't go through, you may not be able to join classes until your account is up to date.",
+        "Prices only change from your next block, with at least 4 weeks' notice. ScoutCo isn't registered for GST, so no GST is charged."]],
+      ["Health and safety", [
+        "You'll complete the ScoutCo intake form honestly before your first class, and tell " + COACH + " about any change in your health, injuries or medications.",
+        "If you have health issues that affect training, it's your responsibility to seek medical advice.",
+        "Tell " + COACH + " straight away about pain, dizziness or anything that doesn't feel right.",
+        "Strength training carries some risk of soreness, strains or, rarely, more serious injury. " + COACH + " will coach the group to train safely, and you agree to follow " +
+          COACH + "'s instructions and train within your limits."]],
+      ["Ending the agreement", [
+        "Either of us can end the agreement by giving at least 2 weeks' notice before the end of the current block.",
+        COACH + " may end the agreement if the policies are repeatedly not followed, or if continuing isn't safe. You'll be given notice and refunded any unused classes pro-rata."]],
+      ["ScoutCo policies", [
+        "This agreement includes the ScoutCo policies at scoutco.com.au/policies: Cancellations, Payments and refunds, Privacy, Health and safety, Lift Club guidelines, and Terms of service.",
+        "Policy changes are announced at least 14 days ahead on ScoutCo's social media and in the app.",
+        "Nothing in this agreement limits your rights under the Australian Consumer Law. This agreement is governed by Queensland law."]]
+    ];
+    return terms;
+  }
   var AG_PARENT = [
     "I have read the client's ScoutCo agreement and the ScoutCo policies at scoutco.com.au/policies, and I agree to them on the client's behalf.",
     "I have completed, or helped complete, the ScoutCo intake form honestly, and I'll tell " + COACH + " about any change in the client's health.",
@@ -1982,7 +2051,7 @@
   }
   function agDetails(a) {
     var rows = [["Agreement", a.type], ["Start date", a.start]];
-    if (!agOnline(a)) rows.push(["Session day and time", a.time]);
+    if (!agOnline(a)) rows.push([agClass(a) ? "Class day and time" : "Session day and time", a.time]);
     rows.push(["Price per 12-week block", a.price], ["How you'll pay", a.payment]);
     return rows.filter(function (r) { return String(r[1] || "").trim(); });
   }
@@ -1993,7 +2062,7 @@
   // The exact words the client agreed to, saved on the Agreements tab as their copy.
   function agreementText(a, d) {
     var client = (state.data && state.data.client) || {};
-    var out = ["ScoutCo " + (agOnline(a) ? "online" : "face-to-face") + " coaching agreement", agPartyLine(client.name), ""];
+    var out = [agClass(a) ? "ScoutCo " + a.type + " class agreement" : "ScoutCo " + (agOnline(a) ? "online" : "face-to-face") + " coaching agreement", agPartyLine(client.name), ""];
     agDetails(a).forEach(function (r) { out.push(r[0] + ": " + r[1]); });
     agreementTerms(a).forEach(function (t, i) {
       out.push("", (i + 1) + ". " + t[0]);
@@ -2133,7 +2202,7 @@
     return !!(r && (r.seen || (s && s.code === state.code && s.id === r.id)));
   }
   function renewalHtml(r, withButton) {
-    var rows = [["Session day and time", r.time], ["Price for the 12-week block", r.price], ["Payment", r.payment]]
+    var rows = [[isClass() ? "Class day and time" : "Session day and time", r.time], ["Price for the 12-week block", r.price], ["Payment", r.payment]]
       .filter(function (x) { return String(x[1] || "").trim(); });
     return "<div><strong>Your next block starts " + esc(r.start) + "</strong>" +
       (rows.length ? '<dl class="ag-details">' + rows.map(function (x) { return "<dt>" + esc(x[0]) + "</dt><dd>" + esc(x[1]) + "</dd>"; }).join("") + "</dl>" : "") +
@@ -2152,6 +2221,106 @@
     queue({ type: "renewal", key: r.id });
     save(KEY_RENEW, { code: state.code, id: r.id, at: Date.now() });
     render();
+  }
+
+  // ---------- group class workouts ----------
+  // The sheet sends { name, weeks: [{ key, start, workout, notes, counts, mine }], reactions: [{ emoji, label }] }.
+  var CLASS_REACTIONS = [{ emoji: "🔥", label: "Loved it" }, { emoji: "💪", label: "Just right" }, { emoji: "🥵", label: "Tough" }, { emoji: "😎", label: "Too easy" }];
+  function classInfo() { return (state.data && state.data.classWorkouts) || { name: "", weeks: [] }; }
+  function classReactions() { var r = classInfo().reactions; return r && r.length ? r : CLASS_REACTIONS; }
+  function classLocal() { return load(KEY_CLASS_REACT, {}); }
+  // Their reaction and comment on a week: what they did on this phone, else what the sheet has.
+  function classMine(w) {
+    var l = classLocal()[state.code + "|" + w.key];
+    return l || w.mine || { emoji: "", comment: "" };
+  }
+  // Once the sheet has caught up, the phone's copy isn't needed any more.
+  function mergeClass() {
+    var all = classLocal(), changed = false, prefix = state.code + "|";
+    var waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "classreact") waiting[x.key] = true; });
+    var fresh = Date.parse((state.data && state.data.updated) || "") || 0;
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf(prefix) === 0 && !waiting[k.slice(prefix.length)] && fresh > (all[k].at || 0)) { delete all[k]; changed = true; }
+    });
+    if (changed) save(KEY_CLASS_REACT, all);
+  }
+  function classCounts(w) {
+    var c = {}, server = (w.mine && w.mine.emoji) || "", now = classMine(w).emoji || "";
+    Object.keys(w.counts || {}).forEach(function (e) { c[e] = w.counts[e]; });
+    if (server !== now) {
+      if (server && c[server]) c[server]--;
+      if (now) c[now] = (c[now] || 0) + 1;
+    }
+    return c;
+  }
+  function weekOfText(w) { var d = parseDay(w.start); return d ? "Week of " + d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" }) : ""; }
+  function classWeekState(w) {
+    var d = parseDay(w.start), today = todayDay();
+    if (!d) return "past";
+    if (today < d) return "soon";
+    return today < addDays(d, 7) ? "now" : "past";
+  }
+  function classReactHtml(w) {
+    var mine = classMine(w), counts = classCounts(w);
+    var total = Object.keys(counts).reduce(function (n, e) { return n + (counts[e] || 0); }, 0);
+    var open = state.classOpen === w.key;
+    var draft = state.classDrafts[w.key] != null ? state.classDrafts[w.key] : (mine.comment || "");
+    var waiting = load(KEY_OUTBOX, []).some(function (x) { return x.type === "classreact" && x.key === w.key; });
+    return '<div class="class-react">' +
+      '<div class="class-react-q">How was it?</div>' +
+      '<div class="class-react-row" role="group" aria-label="React to this workout">' + classReactions().map(function (r) {
+        var on = r.emoji === mine.emoji;
+        return '<button class="comm-react class-react-btn' + (on ? " on" : "") + '" data-class-react="' + esc(w.key) + '" data-emoji="' + esc(r.emoji) + '" aria-pressed="' + on + '">' +
+          esc(r.emoji) + " <span>" + esc(r.label) + (counts[r.emoji] ? " · " + counts[r.emoji] : "") + "</span></button>";
+      }).join("") + "</div>" +
+      '<div class="small muted class-react-note">' + (total ? total + (total === 1 ? " person has" : " people have") + " reacted" : "Be the first to react") +
+        (waiting && canSend() ? " · Sending…" : "") + "</div>" +
+      (mine.comment && !open ? '<div class="sent-comment">' + esc(mine.comment) + '<div class="small muted">Only ' + esc(COACH) + " sees this</div></div>" : "") +
+      (open ?
+        '<div class="day-comment class-comment"><label class="comment-label" for="cc-' + esc(w.key) + '">Comment for ' + esc(COACH) + "</label>" +
+          '<textarea id="cc-' + esc(w.key) + '" data-class-comment="' + esc(w.key) + '" rows="3" maxlength="2000" placeholder="PBs, anything sore, what you loved…">' + esc(draft) + "</textarea>" +
+          '<div class="comment-actions"><span class="small muted">Only ' + esc(COACH) + ' sees comments.</span><button class="btn small ghost" data-class-cancel>Cancel</button><button class="btn small primary" data-class-send="' + esc(w.key) + '">Send</button></div></div>'
+        : '<button class="comm-link" data-class-open="' + esc(w.key) + '">' + (mine.comment ? "Edit your comment" : "Add a comment for " + esc(COACH)) + "</button>") +
+    "</div>";
+  }
+  function classWorkoutHtml(w, big) {
+    var st = classWeekState(w);
+    return '<article class="card class-workout' + (st === "now" ? " this-week" : "") + '">' +
+      '<div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") + esc(weekOfText(w)) + "</div>" +
+      (big ? "<h2>" + esc(w.workout) + "</h2>" : "<h3>" + esc(w.workout) + "</h3>") +
+      (w.notes ? '<p class="class-notes">' + esc(w.notes) + "</p>" : "") +
+      (st === "soon" ? '<p class="small muted">You can react to this one after the class.</p>' : classReactHtml(w)) +
+    "</article>";
+  }
+  function renderClass() {
+    var info = classInfo(), weeks = info.weeks || [];
+    var now = weeks.filter(function (w) { return classWeekState(w) === "now"; });
+    var soon = weeks.filter(function (w) { return classWeekState(w) === "soon"; });
+    var past = weeks.filter(function (w) { return classWeekState(w) === "past"; }).reverse();
+    var html = "";
+    if (!weeks.length) {
+      html = '<p class="empty">' + esc(COACH) + " hasn't added this block's workouts yet. Check back soon.</p>";
+    } else {
+      if (now.length) html += now.map(function (w) { return classWorkoutHtml(w, true); }).join("");
+      else html += '<section class="card"><h3>No class workout this week</h3><p class="small muted">' +
+        (soon.length ? "Next up: " + esc(soon[0].workout) + ", " + esc(weekOfText(soon[0]).toLowerCase()) + "." : "Check back soon.") + "</p></section>";
+      if (soon.length) html += '<h3 class="section-title">Coming up</h3><ul class="class-list">' + soon.map(function (w) {
+        return "<li><span>" + esc(w.workout) + '</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
+      }).join("") + "</ul>";
+      if (past.length) html += '<h3 class="section-title">Past workouts</h3>' + past.map(function (w) { return classWorkoutHtml(w, false); }).join("");
+    }
+    $("classPane").innerHTML = html;
+  }
+  function classReact(key, emoji, comment) {
+    var w = (classInfo().weeks || []).filter(function (x) { return x.key === key; })[0];
+    if (!w) return;
+    var mine = classMine(w);
+    var next = { emoji: emoji == null ? (mine.emoji || "") : emoji, comment: comment == null ? (mine.comment || "") : comment };
+    var all = classLocal();
+    all[state.code + "|" + key] = { emoji: next.emoji, comment: next.comment, at: Date.now() };
+    save(KEY_CLASS_REACT, all);
+    queue({ type: "classreact", key: key, emoji: next.emoji, comment: next.comment });
   }
 
   // ---------- coach message reactions ----------
@@ -2192,6 +2361,7 @@
     // Keep the cursor in a comment box if the screen redraws while someone is typing.
     var active = document.activeElement;
     var attr = active && active.getAttribute && (active.getAttribute("data-comment") != null ? "data-comment" :
+      active.getAttribute("data-class-comment") != null ? "data-class-comment" :
       active.getAttribute("data-weight") != null ? "data-weight" :
       active.getAttribute("data-ci") != null ? "data-ci" :
       active.getAttribute("data-prof") != null ? "data-prof" :
@@ -2237,7 +2407,7 @@
     if (sType || sText) {
       sessions.innerHTML =
         '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>' +
-        "<div><strong>Your sessions</strong>" +
+        "<div><strong>" + (isClass() ? "Your class" : "Your sessions") + "</strong>" +
         (sType ? '<span class="type-badge">' + esc(sType) + "</span>" : "") +
         (sText ? '<div class="sessions-text">' + esc(sText) + "</div>" : "") + "</div>";
       sessions.classList.remove("hidden");
@@ -2270,6 +2440,17 @@
     } else {
       note.classList.add("hidden");
     }
+
+    // Group class members see the weekly class workouts instead of a program.
+    var inClass = isClass();
+    $("classPane").classList.toggle("hidden", !inClass);
+    if (inClass) {
+      renderClass();
+      ["emptyState", "blockTabs", "weekTabs"].forEach(function (id) { $(id).classList.add("hidden"); });
+      $("days").innerHTML = "";
+      return;
+    }
+    $("classPane").innerHTML = "";
 
     $("emptyState").classList.toggle("hidden", weeks.length > 0);
 
@@ -2465,6 +2646,37 @@
     state.manual = true;
     save(KEY_WEEK, state.week);
     render();
+  });
+
+  $("classPane").addEventListener("input", function (e) {
+    var t = e.target;
+    if (t.getAttribute && t.getAttribute("data-class-comment") != null) state.classDrafts[t.getAttribute("data-class-comment")] = t.value;
+  });
+  $("classPane").addEventListener("click", function (e) {
+    var b;
+    if ((b = e.target.closest("[data-class-react]"))) {
+      var key = b.getAttribute("data-class-react"), emoji = b.getAttribute("data-emoji");
+      var w = (classInfo().weeks || []).filter(function (x) { return x.key === key; })[0];
+      if (!w) return;
+      classReact(key, classMine(w).emoji === emoji ? "" : emoji, null); // tap your pick again to take it off
+      render();
+      return;
+    }
+    if ((b = e.target.closest("[data-class-open]"))) {
+      state.classOpen = b.getAttribute("data-class-open");
+      render();
+      var box = document.querySelector('[data-class-comment="' + CSS.escape(state.classOpen) + '"]');
+      if (box) box.focus();
+      return;
+    }
+    if (e.target.closest("[data-class-cancel]")) { if (state.classOpen) delete state.classDrafts[state.classOpen]; state.classOpen = null; render(); return; }
+    if ((b = e.target.closest("[data-class-send]"))) {
+      var k = b.getAttribute("data-class-send");
+      classReact(k, null, String(state.classDrafts[k] != null ? state.classDrafts[k] : "").trim().slice(0, 2000));
+      delete state.classDrafts[k];
+      state.classOpen = null;
+      render();
+    }
   });
 
   $("viewTabs").addEventListener("click", function (e) {
@@ -2946,6 +3158,31 @@
               ]}
             ]}
           ]}
+        ]
+      },
+      updated: new Date().toISOString()
+    };
+  }
+
+  // A group class member (code DEMO-CLASS): weekly class workouts instead of a program.
+  function demoClassData() {
+    var monday = function (weeks) { var d = mondayOf(new Date()); return isoDay(addDays(d, 7 * weeks)); };
+    var wk = function (n, workout, notes, counts, mine) {
+      return { key: monday(n), start: monday(n), workout: workout, notes: notes || "", counts: counts || {}, mine: mine || null };
+    };
+    return {
+      agreement: { id: "demo-class", type: "Lift Club", start: "3 November 2026", time: "Wednesdays 5:30pm", price: "$240", payment: "Fortnightly via Stripe link", under18: false, signed: false },
+      client: { name: "Demo Lifter", type: "Lift Club", sessions: "Wednesdays 5:30pm at the ScoutCo Studio", message: "Welcome to Lift Club! Your workout for each week is below. Tell me how it went after class." },
+      program: { name: "Lift Club", blocks: [] },
+      classWorkouts: {
+        name: "Lift Club",
+        reactions: [{ emoji: "🔥", label: "Loved it" }, { emoji: "💪", label: "Just right" }, { emoji: "🥵", label: "Tough" }, { emoji: "😎", label: "Too easy" }],
+        weeks: [
+          wk(-2, "Squat foundations", "", { "🔥": 3, "💪": 4 }, { emoji: "💪", comment: "" }),
+          wk(-1, "Push and pull", "", { "🥵": 5, "🔥": 2 }, null),
+          wk(0, "Deadlift day", "Bring a water bottle and flat shoes. We'll work up to a heavy triple.", { "🔥": 2, "💪": 1 }, null),
+          wk(1, "Partner conditioning"),
+          wk(2, "Bench and carries")
         ]
       },
       updated: new Date().toISOString()
