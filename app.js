@@ -2254,12 +2254,21 @@
     }
     return c;
   }
-  function weekOfText(w) { var d = parseDay(w.start); return d ? "Week of " + d.toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" }) : ""; }
+  function weekOfText(w) { var d = parseDay(w.start); return d ? d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" }) : ""; }
+  // "now": the class is in this Monday-to-Sunday week. "soon": a later week. "past": an earlier week.
   function classWeekState(w) {
-    var d = parseDay(w.start), today = todayDay();
+    var d = parseDay(w.start), mon = mondayOf(new Date());
     if (!d) return "past";
-    if (today < d) return "soon";
-    return today < addDays(d, 7) ? "now" : "past";
+    if (d < mon) return "past";
+    return d < addDays(mon, 7) ? "now" : "soon";
+  }
+  // They can react from the day of the class.
+  function classDone(w) { var d = parseDay(w.start); return !d || todayDay() >= d; }
+  function classChips(w) {
+    var chips = [["Type", w.type], ["Main muscles", w.muscles]].filter(function (c) { return String(c[1] || "").trim(); });
+    return chips.length ? '<div class="class-chips">' + chips.map(function (c) {
+      return '<span class="class-chip"><b>' + esc(c[0]) + "</b>" + esc(c[1]) + "</span>";
+    }).join("") + "</div>" : "";
   }
   function classReactHtml(w) {
     var mine = classMine(w), counts = classCounts(w);
@@ -2289,8 +2298,9 @@
     return '<article class="card class-workout' + (st === "now" ? " this-week" : "") + '">' +
       '<div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") + esc(weekOfText(w)) + "</div>" +
       (big ? "<h2>" + esc(w.workout) + "</h2>" : "<h3>" + esc(w.workout) + "</h3>") +
+      classChips(w) +
       (w.notes ? '<p class="class-notes">' + esc(w.notes) + "</p>" : "") +
-      (st === "soon" ? '<p class="small muted">You can react to this one after the class.</p>' : classReactHtml(w)) +
+      (classDone(w) ? classReactHtml(w) : '<p class="small muted">You can react to this one after the class.</p>') +
     "</article>";
   }
   function renderClass() {
@@ -2304,9 +2314,9 @@
     } else {
       if (now.length) html += now.map(function (w) { return classWorkoutHtml(w, true); }).join("");
       else html += '<section class="card"><h3>No class workout this week</h3><p class="small muted">' +
-        (soon.length ? "Next up: " + esc(soon[0].workout) + ", " + esc(weekOfText(soon[0]).toLowerCase()) + "." : "Check back soon.") + "</p></section>";
+        (soon.length ? "Next up: " + esc(soon[0].workout) + " on " + esc(weekOfText(soon[0])) + "." : "Check back soon.") + "</p></section>";
       if (soon.length) html += '<h3 class="section-title">Coming up</h3><ul class="class-list">' + soon.map(function (w) {
-        return "<li><span>" + esc(w.workout) + '</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
+        return "<li><span>" + esc(w.workout) + (w.type ? ' <small class="muted">· ' + esc(w.type) + "</small>" : "") + '</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
       }).join("") + "</ul>";
       if (past.length) html += '<h3 class="section-title">Past workouts</h3>' + past.map(function (w) { return classWorkoutHtml(w, false); }).join("");
     }
@@ -3166,9 +3176,10 @@
 
   // A group class member (code DEMO-CLASS): weekly class workouts instead of a program.
   function demoClassData() {
-    var monday = function (weeks) { var d = mondayOf(new Date()); return isoDay(addDays(d, 7 * weeks)); };
-    var wk = function (n, workout, notes, counts, mine) {
-      return { key: monday(n), start: monday(n), workout: workout, notes: notes || "", counts: counts || {}, mine: mine || null };
+    // Tuesday classes. This week's is yesterday if today is after Tuesday, so it can be reacted to.
+    var tuesday = function (weeks) { var d = mondayOf(new Date()); return isoDay(addDays(d, 7 * weeks + 1)); };
+    var wk = function (n, workout, type, muscles, notes, counts, mine) {
+      return { key: tuesday(n), start: tuesday(n), workout: workout, type: type, muscles: muscles, notes: notes || "", counts: counts || {}, mine: mine || null };
     };
     return {
       agreement: { id: "demo-class", type: "Lift Club", start: "3 November 2026", time: "Wednesdays 5:30pm", price: "$240", payment: "Fortnightly via Stripe link", under18: false, signed: false },
@@ -3178,11 +3189,11 @@
         name: "Lift Club",
         reactions: [{ emoji: "🔥", label: "Loved it" }, { emoji: "💪", label: "Just right" }, { emoji: "🥵", label: "Tough" }, { emoji: "😎", label: "Too easy" }],
         weeks: [
-          wk(-2, "Squat foundations", "", { "🔥": 3, "💪": 4 }, { emoji: "💪", comment: "" }),
-          wk(-1, "Push and pull", "", { "🥵": 5, "🔥": 2 }, null),
-          wk(0, "Deadlift day", "Bring a water bottle and flat shoes. We'll work up to a heavy triple.", { "🔥": 2, "💪": 1 }, null),
-          wk(1, "Partner conditioning"),
-          wk(2, "Bench and carries")
+          wk(-2, "Gauntlet", "Circuit", "Full body", "", { "🔥": 3, "💪": 4 }, { emoji: "💪", comment: "" }),
+          wk(-1, "Iron Pyramid", "Strength", "Chest and back", "", { "🥵": 5, "🔥": 2 }, null),
+          wk(0, "Bronco", "Tabata", "Quads and hamstrings", "Bring a water bottle and flat shoes.", { "🔥": 2, "💪": 1 }, null),
+          wk(1, "Deck of Pain", "EMOM", "Shoulders and core"),
+          wk(2, "Tank", "Strength", "Glutes and back")
         ]
       },
       updated: new Date().toISOString()

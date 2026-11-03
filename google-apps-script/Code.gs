@@ -23,7 +23,7 @@
  *   Videos:   videos you send clients from their sessions, and form videos clients send you (files live in the "ScoutCo videos" folder in your Drive)
  *   PBs:      a row each time a client beats their 1RM on back squat, deadlift or bench press (they get a pop-up in the app)
  *   Renewals: a notice before each client's next block. Tick "Send to app" and they see it in their app
- *   Class workouts: Class | Week starting | Workout | Notes for the class. Group class members (Clients Type "Lift Club"
+ *   Class workouts: Class | Date | Workout | Type | Main muscle groups | Notes for the class. Group class members (Clients Type "Lift Club"
  *               or "Jr Lift Club") see these in their app instead of a program (ScoutCo → Set up group classes)
  *   Class feedback: filled in by the app when class members react to or comment on a week's workout
  *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements).
@@ -3166,9 +3166,9 @@ function esc_(s) {
 /* ------------------------------------------------------------------ */
 
 var CLASS_WORKOUTS_TAB = "Class workouts";
-var CLASS_WORKOUT_HEADERS = ["Class", "Week starting", "Workout", "Notes for the class"];
+var CLASS_WORKOUT_HEADERS = ["Class", "Date", "Workout", "Type", "Main muscle groups", "Notes for the class"];
 var CLASS_FEEDBACK_TAB = "Class feedback";
-var CLASS_FEEDBACK_HEADERS = ["Updated", "Class", "Week starting", "Workout", "Client", "Reaction", "Comment", "Key"];
+var CLASS_FEEDBACK_HEADERS = ["Updated", "Class", "Class date", "Workout", "Client", "Reaction", "Comment", "Key"];
 var CLASS_NAMES = ["Lift Club", "Jr Lift Club"];
 // What class members can tap after a workout. Kept in step with CLASS_REACTIONS in app.js.
 var CLASS_REACTIONS = [["🔥", "Loved it"], ["💪", "Just right"], ["🥵", "Tough"], ["😎", "Too easy"]];
@@ -3183,16 +3183,17 @@ function className_(client) {
 
 function classKey_(s) { return String(s || "").trim().toLowerCase().replace(/\s+/g, " "); }
 
-/** The workouts written for one class, oldest week first: [{ key, start (yyyy-MM-dd), workout, notes }]. */
+/** The workouts written for one class, oldest first: [{ key, start (the class date, yyyy-MM-dd), workout, type, muscles, notes }]. */
 function classWorkouts_(ss, name) {
   var tz = ss.getSpreadsheetTimeZone(), want = classKey_(name), out = [], perWeek = {};
   readTab_(ss, CLASS_WORKOUTS_TAB).forEach(function (r) {
     if (classKey_(r.Class) !== want) return;
-    var workout = text_(r.Workout), d = toDate_(r["Week starting"]);
+    var workout = text_(r.Workout), d = toDate_(r.Date || r["Week starting"]);
     if (!workout || !d) return;
     var start = Utilities.formatDate(d, tz, "yyyy-MM-dd");
     var n = perWeek[start] = (perWeek[start] || 0) + 1;
-    out.push({ key: start + (n > 1 ? "#" + n : ""), start: start, workout: workout, notes: text_(r["Notes for the class"]) });
+    out.push({ key: start + (n > 1 ? "#" + n : ""), start: start, workout: workout, type: text_(r.Type),
+      muscles: text_(r["Main muscle groups"]), notes: text_(r["Notes for the class"]) });
   });
   return out.sort(function (a, b) { return a.key < b.key ? -1 : a.key > b.key ? 1 : 0; });
 }
@@ -3245,7 +3246,7 @@ function notifyClass_(ss, client, items) {
     var to = Session.getEffectiveUser().getEmail();
     if (!to) return;
     var lines = items.map(function (c) {
-      return c.cls + " · " + c.workout + " (week of " + c.start + ")" + (c.emoji ? " " + c.emoji : "") + "\n" + c.comment;
+      return c.cls + " · " + c.workout + " (" + c.start + ")" + (c.emoji ? " " + c.emoji : "") + "\n" + c.comment;
     });
     MailApp.sendEmail(to, "ScoutCo: class feedback from " + (client.Name || "a class member"),
       lines.join("\n\n") + "\n\nAll class feedback is on the Class feedback tab:\n" + ss.getUrl());
@@ -3265,7 +3266,7 @@ function classFeedbackSummary_(ss, since) {
   rowsOf_(ss, CLASS_FEEDBACK_TAB, CLASS_FEEDBACK_HEADERS.length).forEach(function (r) {
     if (!(r[0] instanceof Date) || r[0] < since) return;
     var start = r[2] instanceof Date ? Utilities.formatDate(r[2], tz, "d MMM") : text_(r[2]);
-    var k = text_(r[1]) + " · " + text_(r[3]) + " (week of " + start + ")";
+    var k = text_(r[1]) + " · " + text_(r[3]) + " (" + start + ")";
     if (!byWorkout[k]) { byWorkout[k] = { counts: {}, comments: [] }; order.push(k); }
     var emoji = text_(r[5]), comment = text_(r[6]);
     if (emoji) byWorkout[k].counts[emoji] = (byWorkout[k].counts[emoji] || 0) + 1;
@@ -3286,13 +3287,13 @@ function setupClasses() {
     sheet = ss.insertSheet(CLASS_WORKOUTS_TAB);
     sheet.getRange(1, 1, 1, CLASS_WORKOUT_HEADERS.length).setValues([CLASS_WORKOUT_HEADERS]);
     styleHeader_(sheet, CLASS_WORKOUT_HEADERS.length);
-    sheet.setColumnWidth(1, 140).setColumnWidth(2, 120).setColumnWidth(3, 260).setColumnWidth(4, 380);
+    sheet.setColumnWidth(1, 140).setColumnWidth(2, 120).setColumnWidth(3, 200).setColumnWidth(4, 140).setColumnWidth(5, 220).setColumnWidth(6, 340);
     sheet.setFrozenRows(1);
   }
   var n = Math.max(sheet.getMaxRows() - 1, 1);
   sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(CLASS_NAMES, true).setAllowInvalid(true).build());
   sheet.getRange(2, 2, n, 1).setNumberFormat("dd/mm/yyyy");
-  sheet.getRange(1, 2).setNote("The Monday of the week this workout is for. Class members see it from that week, and can react to it from then on.");
+  sheet.getRange(1, 2).setNote("The date of the class, e.g. 10/11/2026. Class members can react to the workout from that day on.");
   classFeedbackTab_(ss).setColumnWidth(4, 220).setColumnWidth(7, 380);
   // The class agreement types and payment options on the Agreements tab.
   var ag = ss.getSheetByName(AGREEMENTS_TAB);
@@ -3301,8 +3302,8 @@ function setupClasses() {
   SpreadsheetApp.getUi().alert("Done! To set up a group class member:\n\n" +
     "1. Clients tab: add them with ScoutCo → Add a new client, then type \"Lift Club\" or \"Jr Lift Club\" in their Type column and clear their Program column. " +
     "Put the class day and time in their Sessions column (e.g. Wednesdays 5pm).\n\n" +
-    "2. Class workouts tab: one row per class per week. Pick the class, type the Monday of that week, and the workout name. Notes are optional.\n\n" +
-    "Class members see this week's workout at the top of their app, and the other weeks underneath. From the week it's on, they can tap a reaction and leave a comment. " +
+    "2. Class workouts tab: one row per class. Pick the class, type the date (e.g. 10/11/2026), the workout name (e.g. Bronco), the type (e.g. Tabata) and the main muscle groups (e.g. Quads and hamstrings). Notes are optional.\n\n" +
+    "Class members see this week's workout at the top of their app, and the other weeks underneath. From the day of the class, they can tap a reaction and leave a comment. " +
     "Everything lands on the Class feedback tab, and you get an email when someone writes a comment.\n\n" +
     "3. Agreements: pick \"Lift Club\" or \"Jr Lift Club\" as the agreement type, and $240 as the price per block.");
 }

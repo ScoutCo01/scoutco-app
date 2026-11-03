@@ -566,3 +566,6 @@ button.comm-avatar { cursor: pointer; }
 .class-list { list-style: none; margin: 0; padding: 0; }
 .class-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin: 8px 0; }
 .class-list small { flex: 0 0 auto; }
+.class-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
+.class-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
+.class-chip b { color: var(--muted); font-weight: 600; margin-right: 6px; }
