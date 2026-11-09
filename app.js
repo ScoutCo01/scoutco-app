@@ -2297,7 +2297,7 @@
     var st = classWeekState(w);
     if (w.noClass) {
       return '<article class="card class-workout class-break"><div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") +
-        esc(weekOfText(w)) + "</div><h3>No class this week</h3></article>";
+        esc(weekOfText(w)) + "</div><h3>NO CLASS THIS WEEK</h3></article>";
     }
     return '<article class="card class-workout' + (st === "now" ? " this-week" : "") + '">' +
       '<div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") + esc(weekOfText(w)) + "</div>" +
@@ -2320,7 +2320,7 @@
       else html += '<section class="card"><h3>No class workout this week</h3><p class="small muted">' +
         (nextUp ? "Next up: " + esc(nextUp.workout) + " on " + esc(weekOfText(nextUp)) + "." : "Check back soon.") + "</p></section>";
       if (soon.length) html += '<h3 class="section-title">Coming up</h3><ul class="class-list">' + soon.map(function (w) {
-        if (w.noClass) return '<li class="class-break"><span class="muted">No class</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
+        if (w.noClass) return '<li class="class-break"><span>NO CLASS THIS WEEK</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
         return "<li><span>" + esc(w.workout) + (w.type ? ' <small class="muted">· ' + esc(w.type) + "</small>" : "") + '</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
       }).join("") + "</ul>";
       if (past.length) html += '<h3 class="section-title">Past workouts</h3>' + past.map(function (w) { return classWorkoutHtml(w, false); }).join("");
