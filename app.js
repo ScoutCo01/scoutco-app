@@ -2265,7 +2265,7 @@
   // They can react from the day of the class.
   function classDone(w) { var d = parseDay(w.start); return !d || todayDay() >= d; }
   function classChips(w) {
-    var chips = [["Type", w.type], ["Main muscles", w.muscles]].filter(function (c) { return String(c[1] || "").trim(); });
+    var chips = [["Type", w.type], ["Intensity", w.intensity]].filter(function (c) { return String(c[1] || "").trim(); });
     return chips.length ? '<div class="class-chips">' + chips.map(function (c) {
       return '<span class="class-chip"><b>' + esc(c[0]) + "</b>" + esc(c[1]) + "</span>";
     }).join("") + "</div>" : "";
@@ -2285,21 +2285,24 @@
       }).join("") + "</div>" +
       '<div class="small muted class-react-note">' + (total ? total + (total === 1 ? " person has" : " people have") + " reacted" : "Be the first to react") +
         (waiting && canSend() ? " · Sending…" : "") + "</div>" +
-      (mine.comment && !open ? '<div class="sent-comment">' + esc(mine.comment) + '<div class="small muted">Only ' + esc(COACH) + " sees this</div></div>" : "") +
+      (mine.comment && !open ? '<div class="sent-comment"><div class="comment-label">Your notes</div>' + esc(mine.comment) + '<div class="small muted">Just you and ' + esc(COACH) + " see these</div></div>" : "") +
       (open ?
-        '<div class="day-comment class-comment"><label class="comment-label" for="cc-' + esc(w.key) + '">Comment for ' + esc(COACH) + "</label>" +
-          '<textarea id="cc-' + esc(w.key) + '" data-class-comment="' + esc(w.key) + '" rows="3" maxlength="2000" placeholder="PBs, anything sore, what you loved…">' + esc(draft) + "</textarea>" +
-          '<div class="comment-actions"><span class="small muted">Only ' + esc(COACH) + ' sees comments.</span><button class="btn small ghost" data-class-cancel>Cancel</button><button class="btn small primary" data-class-send="' + esc(w.key) + '">Send</button></div></div>'
-        : '<button class="comm-link" data-class-open="' + esc(w.key) + '">' + (mine.comment ? "Edit your comment" : "Add a comment for " + esc(COACH)) + "</button>") +
+        '<div class="day-comment class-comment"><label class="comment-label" for="cc-' + esc(w.key) + '">Your notes</label>' +
+          '<textarea id="cc-' + esc(w.key) + '" data-class-comment="' + esc(w.key) + '" rows="4" maxlength="2000" placeholder="How it felt, weights you lifted, a new 1RM, anything for ' + esc(COACH) + '…">' + esc(draft) + "</textarea>" +
+          '<div class="comment-actions"><span class="small muted">Just you and ' + esc(COACH) + ' see these.</span><button class="btn small ghost" data-class-cancel>Cancel</button><button class="btn small primary" data-class-send="' + esc(w.key) + '">Save</button></div></div>'
+        : '<button class="comm-link" data-class-open="' + esc(w.key) + '">' + (mine.comment ? "Edit your notes" : "Add your notes") + "</button>") +
     "</div>";
   }
   function classWorkoutHtml(w, big) {
     var st = classWeekState(w);
+    if (w.noClass) {
+      return '<article class="card class-workout class-break"><div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") +
+        esc(weekOfText(w)) + "</div><h3>No class this week</h3></article>";
+    }
     return '<article class="card class-workout' + (st === "now" ? " this-week" : "") + '">' +
       '<div class="class-when">' + (st === "now" ? '<span class="class-tag">This week</span>' : "") + esc(weekOfText(w)) + "</div>" +
       (big ? "<h2>" + esc(w.workout) + "</h2>" : "<h3>" + esc(w.workout) + "</h3>") +
       classChips(w) +
-      (w.notes ? '<p class="class-notes">' + esc(w.notes) + "</p>" : "") +
       (classDone(w) ? classReactHtml(w) : '<p class="small muted">You can react to this one after the class.</p>') +
     "</article>";
   }
@@ -2307,15 +2310,17 @@
     var info = classInfo(), weeks = info.weeks || [];
     var now = weeks.filter(function (w) { return classWeekState(w) === "now"; });
     var soon = weeks.filter(function (w) { return classWeekState(w) === "soon"; });
-    var past = weeks.filter(function (w) { return classWeekState(w) === "past"; }).reverse();
+    var past = weeks.filter(function (w) { return classWeekState(w) === "past" && !w.noClass; }).reverse();
+    var nextUp = soon.filter(function (w) { return !w.noClass; })[0];
     var html = "";
     if (!weeks.length) {
       html = '<p class="empty">' + esc(COACH) + " hasn't added this block's workouts yet. Check back soon.</p>";
     } else {
       if (now.length) html += now.map(function (w) { return classWorkoutHtml(w, true); }).join("");
       else html += '<section class="card"><h3>No class workout this week</h3><p class="small muted">' +
-        (soon.length ? "Next up: " + esc(soon[0].workout) + " on " + esc(weekOfText(soon[0])) + "." : "Check back soon.") + "</p></section>";
+        (nextUp ? "Next up: " + esc(nextUp.workout) + " on " + esc(weekOfText(nextUp)) + "." : "Check back soon.") + "</p></section>";
       if (soon.length) html += '<h3 class="section-title">Coming up</h3><ul class="class-list">' + soon.map(function (w) {
+        if (w.noClass) return '<li class="class-break"><span class="muted">No class</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
         return "<li><span>" + esc(w.workout) + (w.type ? ' <small class="muted">· ' + esc(w.type) + "</small>" : "") + '</span><small class="muted">' + esc(weekOfText(w)) + "</small></li>";
       }).join("") + "</ul>";
       if (past.length) html += '<h3 class="section-title">Past workouts</h3>' + past.map(function (w) { return classWorkoutHtml(w, false); }).join("");
@@ -3178,8 +3183,8 @@
   function demoClassData() {
     // Tuesday classes. This week's is yesterday if today is after Tuesday, so it can be reacted to.
     var tuesday = function (weeks) { var d = mondayOf(new Date()); return isoDay(addDays(d, 7 * weeks + 1)); };
-    var wk = function (n, workout, type, muscles, notes, counts, mine) {
-      return { key: tuesday(n), start: tuesday(n), workout: workout, type: type, muscles: muscles, notes: notes || "", counts: counts || {}, mine: mine || null };
+    var wk = function (n, workout, type, intensity, notes, counts, mine) {
+      return { key: tuesday(n), start: tuesday(n), workout: workout, type: type, intensity: intensity, noClass: /^no class/i.test(workout), counts: counts || {}, mine: mine || null };
     };
     return {
       agreement: { id: "demo-class", type: "Lift Club", start: "3 November 2026", time: "Wednesdays 5:30pm", price: "$240", payment: "Fortnightly via Stripe link", under18: false, signed: false },
@@ -3189,11 +3194,11 @@
         name: "Lift Club",
         reactions: [{ emoji: "🔥", label: "Loved it" }, { emoji: "💪", label: "Just right" }, { emoji: "🥵", label: "Tough" }, { emoji: "😎", label: "Too easy" }],
         weeks: [
-          wk(-2, "Gauntlet", "Circuit", "Full body", "", { "🔥": 3, "💪": 4 }, { emoji: "💪", comment: "" }),
-          wk(-1, "Iron Pyramid", "Strength", "Chest and back", "", { "🥵": 5, "🔥": 2 }, null),
-          wk(0, "Bronco", "Tabata", "Quads and hamstrings", "Bring a water bottle and flat shoes.", { "🔥": 2, "💪": 1 }, null),
-          wk(1, "Deck of Pain", "EMOM", "Shoulders and core"),
-          wk(2, "Tank", "Strength", "Glutes and back")
+          wk(-2, "Ironbark", "Technique", "Low to moderate", "", { "🔥": 3, "💪": 4 }, { emoji: "💪", comment: "Back squat 3 x 5 at 70 kg, felt solid." }),
+          wk(-1, "Valkyrie", "Tabata + boxing warm-up", "High", "", { "🥵": 5, "🔥": 2 }, null),
+          wk(0, "Goliath", "Technique", "Low to moderate", "", { "🔥": 2, "💪": 1 }, null),
+          wk(1, "No class this week"),
+          wk(2, "Brumby", "EMOM", "Moderate")
         ]
       },
       updated: new Date().toISOString()

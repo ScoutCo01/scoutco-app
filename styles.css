@@ -569,3 +569,5 @@ button.comm-avatar { cursor: pointer; }
 .class-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; }
 .class-chip { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; font-size: 13px; }
 .class-chip b { color: var(--muted); font-weight: 600; margin-right: 6px; }
+.class-break h3 { color: var(--muted); margin-bottom: 0; }
+.sent-comment .comment-label { margin-bottom: 4px; }
