@@ -251,3 +251,19 @@ Class members pay for the class only, so they don't get a program, progress or v
 From the day of the class, class members tap a reaction (🔥 Loved it, 💪 Just right, 🥵 Tough, 😎 Too easy) and can save their own notes (feedback, weights, a new 1RM), which only they and Kirst see. Everyone in the class sees the reaction counts. Feedback lands on the Class feedback tab, comments are emailed to you, and the Monday email has a Group class feedback list. Try it with the code `DEMO-CLASS`.
 
 Agreements: pick `Lift Club` or `Jr Lift Club` as the type, `$240` as the price per block, and a payment option (upfront invoice, or weekly, fortnightly or monthly via Acuity or Stripe). The agreement shows the split amounts ($20 a week, $40 a fortnight, $80 a month). Tick Under 18 for Jr Lift Club so a parent signs too.
+
+## Nutrition questionnaire
+
+Send a client the nutrition questionnaire in their app, the same way as an agreement.
+
+1. One time: ScoutCo menu → **Set up nutrition questionnaire**. This adds the **Nutrition** tab.
+2. Add a row on the Nutrition tab, pick the client, and tick **Send to app**.
+
+The client sees "Your nutrition questionnaire is ready" and a **Nutrition** tab. It asks about their body and health (sex, date of birth, height, weight, conditions, medications), goals (how much they want to lose, by when, how fast), activity, how they eat now, the proteins, carbs, fruit, veggies and fats they like, what they won't eat, allergies and intolerances, foods they avoid for personal, ethical or religious reasons, fridge and microwave access at work, and their relationship with food. They can use kg and cm, or lb, feet and inches. Answers save on their phone as they go.
+
+When they send it, their row fills in with every answer (one column per question) plus:
+
+- **Heads up**: red if a deficit isn't a good idea right now (possible binge eating, restricting, making up for eating, eating disorder history, pregnant or breastfeeding, under 18, underweight or an underweight goal), amber for things to go gently on (emotional eating, food guilt or rules, doesn't want to track, diabetes, weight loss medication, an unrealistic date).
+- **The numbers**: BMR (Mifflin-St Jeor, plus Katch-McArdle if they know their body fat %), maintenance (TDEE) at their activity level and at every level, a suggested starting target (10 to 25% deficit depending on their pace, gentler with an amber heads up, never below BMR, and maintenance only with a red heads up), loss per week, weeks to goal, protein, carbs, fat, fibre and water.
+
+Kirst gets an email with all of it, and a PDF is saved in the "ScoutCo nutrition" folder in Drive. The client never sees the numbers. To fix a number (say their activity level was off), change it in the answer column, click the row, and use ScoutCo → **Recalculate nutrition numbers**. To have them do it again later, add a new row and tick Send to app.

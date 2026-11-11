@@ -28,6 +28,8 @@
  *   Class feedback: filled in by the app when class members react to or comment on a week's workout
  *   Agreements: one row per client agreement. Tick "Send to app" and the client signs it in their app (ScoutCo → Set up agreements).
  *               Each signed agreement is also saved as a PDF in the "ScoutCo agreements" folder in your Drive
+ *   Nutrition: one row per nutrition questionnaire. Tick "Send to app" and the client fills it in in their app
+ *               (ScoutCo → Set up nutrition questionnaire). Their answers, a heads up and the calorie and macro numbers fill in
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
  *
@@ -114,6 +116,7 @@ function doGet(e) {
     videos: safely_(function () { return videosFor_(ss, code, isCoach_(client.Type)); }, []),
     agreement: isCoach_(client.Type) ? undefined : safely_(function () { return agreementFor_(ss, client); }, null),
     renewal: isCoach_(client.Type) ? undefined : safely_(function () { return renewalFor_(ss, client); }, null),
+    nutrition: isCoach_(client.Type) ? undefined : safely_(function () { return nutritionFor_(ss, client); }, null),
     community: { latest: safely_(function () { return communityLatest_(ss, code); }, 0), me: safely_(function () { return personId_(code, communitySalt_()); }, "") },
     updated: new Date().toISOString()
   });
@@ -378,7 +381,7 @@ function doPost(e) {
   }
 
   var events = (body.events || []).slice(0, 200);
-  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [], signed = [], classNotes = [], classCache = {};
+  var done = [], comments = [], checkins = [], community = [], posted = [], replies = [], signed = [], nutrition = [], classNotes = [], classCache = {};
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
@@ -468,6 +471,8 @@ function doPost(e) {
         if (isCoach_(client.Type)) saveCoachProfile_(ss, client, ev);
       } else if (ev.type === "agreement") {
         if (!isCoach_(client.Type)) { var ag = saveAgreement_(ss, client, ev); if (ag) signed.push(ag); }
+      } else if (ev.type === "nutrition") {
+        if (!isCoach_(client.Type)) { var nu = saveNutrition_(ss, client, ev); if (nu) nutrition.push(nu); }
       } else if (ev.type === "renewal") {
         if (!isCoach_(client.Type)) saveRenewalSeen_(ss, client, ev);
       } else if (ev.type === "pb") {
@@ -501,6 +506,7 @@ function doPost(e) {
   if (checkins.length) notifyCheckin_(ss, client, checkins);
   if (classNotes.length) notifyClass_(ss, client, classNotes);
   if (signed.length) notifyAgreement_(ss, signed);
+  if (nutrition.length) notifyNutrition_(ss, nutrition);
   if (posted.length) notifyCommunity_(ss, client, posted);
   if (posted.length) safely_(function () { pushCommunity_(ss, client, posted); }, null);
   replies.forEach(function (r) {
@@ -693,6 +699,8 @@ function onOpen() {
     .addItem("Set up videos", "setupVideos")
     .addItem("Set up agreements", "setupAgreements")
     .addItem("Set up group classes", "setupClasses")
+    .addItem("Set up nutrition questionnaire", "setupNutrition")
+    .addItem("Recalculate nutrition numbers", "recalcNutrition")
     .addSeparator()
     .addItem("Send weekly summary now", "sendWeeklySummaryNow")
     .addItem("Turn on Monday email", "turnOnWeeklyEmail")
@@ -3308,4 +3316,399 @@ function setupClasses() {
     "Class members see this week's workout at the top of their app, and the other weeks underneath. From the day of the class, they can tap a reaction and leave a comment. " +
     "Everything lands on the Class feedback tab, and you get an email when someone writes a comment.\n\n" +
     "3. Agreements: pick \"Lift Club\" or \"Jr Lift Club\" as the agreement type, and $240 as the price per block.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Nutrition questionnaire: you add a row on the Nutrition tab and     */
+/* tick "Send to app", like agreements. The client fills it in in      */
+/* their app. Their answers land on the row, with the calorie and      */
+/* macro numbers worked out for you, and you get an email (and a PDF   */
+/* in the "ScoutCo nutrition" folder in your Drive).                   */
+/* ------------------------------------------------------------------ */
+
+var NUTRITION_TAB = "Nutrition";
+// The rest of the columns (one per question) are added after these the first time someone answers.
+var NUTRITION_HEADERS = ["Client", "Send to app", "Status", "Answered on", "Kirst's notes", "Heads up", "Suggested calories",
+  "Maintenance (TDEE)", "BMR", "Protein (g)", "Carbs (g)", "Fat (g)", "Loss per week (kg)", "Weeks to goal", "Calculations", "PDF", "ID"];
+var NUTRITION_FOLDER = "ScoutCo nutrition";
+// The 5 standard activity levels (Harris-Benedict multipliers). Kept in step with NUTRITION_ACTIVITY in app.js.
+var NUTRITION_ACTIVITY = [
+  ["Sedentary", 1.2], ["Lightly active", 1.375], ["Moderately active", 1.55], ["Very active", 1.725], ["Extra active", 1.9]];
+
+/** ScoutCo menu → Set up nutrition questionnaire. Safe to run again: it only adds what's missing. */
+function setupNutrition() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(NUTRITION_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(NUTRITION_TAB);
+    sheet.getRange(1, 1, 1, NUTRITION_HEADERS.length).setValues([NUTRITION_HEADERS]);
+    styleHeader_(sheet, NUTRITION_HEADERS.length);
+  }
+  var n = Math.max(sheet.getMaxRows() - 1, 1);
+  var clients = ss.getSheetByName(CLIENTS_TAB);
+  if (clients) {
+    var nameCol = clients.getRange(1, 1, 1, clients.getLastColumn()).getValues()[0]
+      .map(function (h) { return String(h).trim().toLowerCase(); }).indexOf("name") + 1;
+    if (nameCol) sheet.getRange(2, 1, n, 1).setDataValidation(SpreadsheetApp.newDataValidation()
+      .requireValueInRange(clients.getRange(2, nameCol, clients.getMaxRows() - 1, 1), true).setAllowInvalid(true).build());
+  }
+  sheet.getRange(2, 2, n, 1).insertCheckboxes();
+  sheet.getRange(2, 3, n, 2).setBackground("#f3f4f6");
+  sheet.getRange(2, 6, n, NUTRITION_HEADERS.length - 5).setBackground("#f3f4f6");
+  sheet.getRange(2, 4, n, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  sheet.getRange(1, 3).setNote("Grey columns fill in by themselves when the client sends their answers.");
+  sheet.getRange(1, 15).setNote("How the numbers were worked out. Change their weight, height, activity level or goal in the answer columns, " +
+    "then click the row and use ScoutCo → Recalculate nutrition numbers.");
+  sheet.setFrozenRows(1);
+  sheet.setFrozenColumns(1);
+  sheet.setColumnWidth(1, 160).setColumnWidth(5, 220).setColumnWidth(6, 260).setColumnWidth(15, 320);
+  ss.setActiveSheet(sheet);
+  SpreadsheetApp.getUi().alert("Done! To send a client the nutrition questionnaire:\n\n" +
+    "1. Add a row on the Nutrition tab and pick the client.\n" +
+    "2. Tick \"Send to app\".\n\n" +
+    "Next time they open the app they'll see \"Your nutrition questionnaire is ready\". It takes them about 10 minutes.\n\n" +
+    "When they send it, the grey columns fill in: their answers, a heads up about anything to be careful with, and the calorie and macro numbers. " +
+    "You get an email with everything, and a PDF is saved in the \"" + NUTRITION_FOLDER + "\" folder in your Drive.\n\n" +
+    "Want them to do it again later (say, in 12 weeks)? Add a new row for them and tick Send to app.");
+}
+
+/** The columns of the Nutrition tab, found by heading. */
+function nutritionCols_(sheet) {
+  var h = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (x) { return String(x).trim(); });
+  var lower = h.map(function (x) { return x.toLowerCase(); });
+  var out = { heads: h, width: h.length };
+  NUTRITION_HEADERS.forEach(function (name) { out[name] = lower.indexOf(name.toLowerCase()) + 1; });
+  return out;
+}
+
+/** The newest questionnaire sent to this client (by name), or null. Gives it an ID the first time. */
+function nutritionFor_(ss, client) {
+  var sheet = ss.getSheetByName(NUTRITION_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var c = nutritionCols_(sheet);
+  if (!c.Client || !c["Send to app"] || !c.ID) return null;
+  var name = String(client.Name || "").trim().toLowerCase();
+  if (!name) return null;
+  var vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width).getValues();
+  for (var i = vals.length - 1; i >= 0; i--) {
+    if (String(vals[i][c.Client - 1]).trim().toLowerCase() !== name || vals[i][c["Send to app"] - 1] !== true) continue;
+    var row = i + 2, id = String(vals[i][c.ID - 1] || "").trim(), status = String(c.Status ? vals[i][c.Status - 1] : "").trim();
+    if (!id) { id = Utilities.getUuid().slice(0, 8); sheet.getRange(row, c.ID).setValue(id); }
+    if (!status && c.Status) sheet.getRange(row, c.Status).setValue("Waiting for answers");
+    var on = c["Answered on"] ? vals[i][c["Answered on"] - 1] : "";
+    return { id: id, done: /^answered/i.test(status), doneOn: on instanceof Date ? on.getTime() : 0 };
+  }
+  return null;
+}
+
+/** Saves a client's answers on their Nutrition row, with the numbers worked out. Returns what to email you, or null. */
+function saveNutrition_(ss, client, ev) {
+  var sheet = ss.getSheetByName(NUTRITION_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  var c = nutritionCols_(sheet);
+  if (!c.ID || !c.Client) return null;
+  var vals = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width).getValues();
+  var name = String(client.Name || "").trim().toLowerCase();
+  for (var i = 0; i < vals.length; i++) {
+    if (String(vals[i][c.ID - 1]).trim() !== String(ev.key || "") || String(vals[i][c.Client - 1]).trim().toLowerCase() !== name) continue;
+    if (c.Status && /^answered/i.test(String(vals[i][c.Status - 1]))) return null; // already answered: keep the first copy
+    var row = i + 2;
+    var answers = (ev.answers || []).slice(0, 150).filter(function (a) { return a && a.length >= 3; }).map(function (a) {
+      return [clip_(a[0], 60).trim(), clip_(a[1], 80).trim(), clip_(a[2], 3000).trim()];
+    });
+    // One column per question, after the fixed ones, found by heading. New questions get a new column at the end.
+    var heads = c.heads.slice(), first = NUTRITION_HEADERS.length, put = {};
+    answers.forEach(function (a) {
+      if (!a[1] || NUTRITION_HEADERS.indexOf(a[1]) !== -1) return;
+      var at = heads.indexOf(a[1]);
+      if (at < 0) { heads.push(a[1]); at = heads.length - 1; }
+      first = Math.min(first, at);
+      put[at] = cell_(a[2]);
+    });
+    if (heads.length > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), heads.length - sheet.getMaxColumns());
+    if (heads.length > c.width) {
+      sheet.getRange(1, c.width + 1, 1, heads.length - c.width).setValues([heads.slice(c.width)]).setFontWeight("bold").setBackground("#ede9fe");
+    }
+    if (heads.length > first) {
+      var rng = sheet.getRange(row, first + 1, 1, heads.length - first);
+      var cur = rng.getValues()[0];
+      for (var k = first; k < heads.length; k++) if (put[k] !== undefined) cur[k - first] = put[k];
+      rng.setValues([cur]).setWrap(false);
+    }
+    var get = function (label) { for (var j = 0; j < answers.length; j++) if (answers[j][1] === label) return answers[j][2]; return ""; };
+    var calc = nutritionCalc_(get);
+    writeNutritionCalc_(sheet, nutritionCols_(sheet), row, calc);
+    if (c.Status) sheet.getRange(row, c.Status).setValue("Answered");
+    if (c["Answered on"]) sheet.getRange(row, c["Answered on"]).setValue(new Date());
+    return { name: client.Name || "", answers: answers, calc: calc, row: row };
+  }
+  return null;
+}
+
+function writeNutritionCalc_(sheet, c, row, calc) {
+  var set = function (col, v) { if (c[col]) sheet.getRange(row, c[col]).setValue(v === null || v === undefined ? "" : v); };
+  set("Heads up", calc.headsUp);
+  set("Suggested calories", calc.suggested || "");
+  set("Maintenance (TDEE)", calc.tdee || "");
+  set("BMR", calc.bmr || "");
+  set("Protein (g)", calc.protein || "");
+  set("Carbs (g)", calc.carbs || "");
+  set("Fat (g)", calc.fat || "");
+  set("Loss per week (kg)", calc.weekly || "");
+  set("Weeks to goal", calc.weeks || "");
+  if (c.Calculations) sheet.getRange(row, c.Calculations).setValue(calc.lines.join("\n")).setWrap(false);
+  if (c["Heads up"]) sheet.getRange(row, c["Heads up"]).setBackground(calc.red.length ? "#fde8e8" : calc.amber.length ? "#fef3c7" : "#f3f4f6");
+}
+
+/** ScoutCo menu → Recalculate nutrition numbers: works the numbers out again for the row you're on,
+ *  from what's in its answer columns now (so you can fix a weight, height or activity level). */
+function recalcNutrition() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet(), ui = SpreadsheetApp.getUi();
+  var sheet = ss.getActiveSheet();
+  if (!sheet || sheet.getName() !== NUTRITION_TAB) { ui.alert("Go to the Nutrition tab and click on the client's row first."); return; }
+  var row = sheet.getActiveRange().getRow();
+  if (row < 2) { ui.alert("Click on the client's row first (not the headings)."); return; }
+  var c = nutritionCols_(sheet);
+  var vals = sheet.getRange(row, 1, 1, c.width).getDisplayValues()[0];
+  var get = function (label) { var at = c.heads.indexOf(label); return at < 0 ? "" : String(vals[at] || "").trim(); };
+  if (!get("Weight (kg)") || !get("Height (cm)")) { ui.alert("That row doesn't have a weight and height yet."); return; }
+  var calc = nutritionCalc_(get);
+  writeNutritionCalc_(sheet, c, row, calc);
+  ui.alert("Done. " + (calc.suggested ? "Suggested: " + calc.suggested + " calories a day." : ""));
+}
+
+/**
+ * Works out BMR, maintenance and a suggested starting target from the answers.
+ * get(label) returns an answer as text. Plain maths only, so it can be tested outside Google.
+ * Formulas: Mifflin-St Jeor BMR (and Katch-McArdle if they gave a body fat %), standard activity
+ * multipliers, 7,700 kcal per kg of body fat. Never suggests going below BMR (or 1,200 / 1,500).
+ */
+function nutritionCalc_(get) {
+  var num = function (label) { var n = parseFloat(String(get(label) || "").replace(/[^0-9.\-]/g, "")); return isFinite(n) ? n : 0; };
+  var has = function (label, re) { return re.test(String(get(label) || "")); };
+  var round = function (x, to) { to = to || 1; return Math.round(x / to) * to; };
+  var kg1 = function (x) { return Math.round(x * 10) / 10; };
+  var comma = function (x) { return String(Math.round(x)).replace(/\B(?=(\d{3})+(?!\d))/g, ","); };
+  var red = [], amber = [], lines = [];
+
+  var sex = String(get("Sex") || "");
+  var female = /female|woman/i.test(sex), male = !female && /male|man/i.test(sex);
+  var age = num("Age"), cm = num("Height (cm)"), kg = num("Weight (kg)"), bf = num("Body fat %");
+  var toLose = num("Weight to lose (kg)");
+  var act = String(get("Activity level") || "");
+  var factor = 0, actName = "";
+  NUTRITION_ACTIVITY.forEach(function (a) { if (!factor && act.toLowerCase().indexOf(a[0].toLowerCase()) === 0) { factor = a[1]; actName = a[0]; } });
+  if (!factor) { factor = 1.375; actName = "Lightly active (not answered, so assumed)"; }
+  var goals = String(get("Main goals") || "");
+  var wantsLoss = /lose|fat loss|weight loss/i.test(goals) || toLose > 0;
+  var wantsMuscle = /muscle/i.test(goals);
+
+  if (!(cm > 0 && kg > 0 && age > 0)) {
+    return { red: [], amber: ["Missing height, weight or age, so no numbers yet."], headsUp: "Missing height, weight or age, so no numbers yet.",
+      lines: ["Missing height, weight or age, so no numbers yet."] };
+  }
+
+  // Body
+  var m = cm / 100, bmi = kg / (m * m);
+  var healthyLow = 18.5 * m * m, healthyHigh = 24.9 * m * m;
+  var goalKg = toLose > 0 ? kg - toLose : 0;
+
+  // Things to be careful with. Red: hold off on a deficit and talk first. Amber: go gently.
+  var food = String(get("Sounds like me") || "");
+  if (/eat a large amount/i.test(food)) red.push("Ticked eating a large amount in a short time and feeling they can't stop (possible binge eating)");
+  if (/make up for eating/i.test(food)) red.push("Ticked making up for eating (vomiting, laxatives or exercising it off)");
+  if (/cut right back|avoid eating/i.test(food)) red.push("Ticked avoiding eating or cutting right back to control their weight");
+  if (/^yes/i.test(String(get("Eating disorder history") || ""))) red.push("Eating disorder history: " + get("Eating disorder history"));
+  if (/in person/i.test(String(get("Eating disorder history") || ""))) amber.push("Would rather talk in person about any eating disorder history");
+  if (/^pregnant|breastfeeding/i.test(String(get("Pregnant or breastfeeding") || ""))) red.push("Pregnant or breastfeeding: " + get("Pregnant or breastfeeding") + ". No deficit; GP or dietitian guidance first");
+  if (age < 18) red.push("Under 18 (age " + age + "). No deficit: fuel growth and training, and involve a parent");
+  if (bmi < 18.5) red.push("BMI " + bmi.toFixed(1) + " is under 18.5 (underweight range)");
+  if (goalKg && goalKg / (m * m) < 18.5) red.push("Goal weight " + kg1(goalKg) + " kg would be under a BMI of 18.5 (below " + kg1(healthyLow) + " kg for their height)");
+
+  if (/stressed|sad|bored/i.test(food)) amber.push("Emotional or comfort eating");
+  if (/guilty|anxious/i.test(food)) amber.push("Guilt or anxiety after eating");
+  if (/strict rules|good and bad/i.test(food)) amber.push("Strict food rules or good and bad foods");
+  if (/weight or shape/i.test(food)) amber.push("Weight or shape has a big effect on how they feel about themselves");
+  if (/lost a lot of weight/i.test(food)) amber.push("Lost a lot of weight quickly in the past year");
+  if (/skip meals/i.test(food)) amber.push("Often skips meals");
+  if (/struggle|up and down/i.test(String(get("Relationship with food") || ""))) amber.push("Describes their relationship with food as " + String(get("Relationship with food")).toLowerCase());
+  if (/not good for me/i.test(String(get("Tracking food") || ""))) amber.push("Says tracking food isn't good for them, so avoid calorie counting");
+  if (/diabetes/i.test(String(get("Health conditions") || ""))) amber.push("Diabetes or pre-diabetes: check any changes with their GP, especially if they're on medication");
+  if (/ozempic|wegovy|mounjaro|saxenda|semaglutide|tirzepatide|glp/i.test(String(get("Medications and supplements") || ""))) amber.push("Taking a weight loss medication (GLP-1): work with their GP");
+  var conditions = String(get("Health conditions") || "").replace(/(^|,\s*)None(,|$)/i, "").trim();
+  if (conditions && !/diabetes/i.test(conditions)) amber.push("Health conditions: " + conditions);
+
+  // Energy
+  var sexConst = female ? -161 : male ? 5 : -78;
+  var bmr = 10 * kg + 6.25 * cm - 5 * age + sexConst;
+  var katch = bf > 3 && bf < 60 ? 370 + 21.6 * kg * (1 - bf / 100) : 0;
+  var tdee = bmr * factor;
+  var floor = Math.max(bmr, female ? 1200 : male ? 1500 : 1350);
+
+  lines.push("Age " + age + ", " + (female ? "female" : male ? "male" : "sex not given (used the average of the male and female formulas)") +
+    ", " + cm + " cm, " + kg1(kg) + " kg" + (bf ? ", " + bf + "% body fat" : ""));
+  lines.push("BMI " + bmi.toFixed(1) + ". Healthy weight range for their height: " + kg1(healthyLow) + " to " + kg1(healthyHigh) + " kg");
+  lines.push("BMR (Mifflin-St Jeor): " + comma(bmr) + " kcal" + (katch ? ". Katch-McArdle (from body fat %): " + comma(katch) + " kcal" : ""));
+  lines.push("Activity: " + actName + " (x" + factor + "). Maintenance (TDEE): " + comma(tdee) + " kcal a day");
+  lines.push("Maintenance at each activity level: " + NUTRITION_ACTIVITY.map(function (a) { return a[0] + " " + comma(round(bmr * a[1], 10)); }).join(", "));
+
+  // Suggested starting target
+  var suggested, pct = 0, label, weekly = 0, weeks = 0;
+  var pace = String(get("Pace") || "");
+  if (red.length) {
+    suggested = tdee; label = "maintenance only: hold off on a deficit until you've talked it through, see the heads up";
+  } else if (wantsLoss) {
+    pct = /slow/i.test(pace) ? 0.10 : /fast/i.test(pace) ? 0.25 : 0.20;
+    if (amber.length && pct > 0.15) pct = 0.15;
+    if (bmi < 23 && pct > 0.15) pct = 0.15; // leaner people: smaller deficit
+    suggested = tdee * (1 - pct);
+    label = Math.round(pct * 100) + "% deficit" + (amber.length ? ", kept gentle because of the heads up" : "");
+    if (suggested < floor) { suggested = floor; label += ". Raised to " + comma(floor) + " so it isn't below their BMR"; }
+  } else if (wantsMuscle) {
+    suggested = tdee * 1.075; label = "Small surplus (+7.5%) for building muscle";
+  } else {
+    suggested = tdee; label = "Maintenance";
+  }
+  suggested = round(suggested, 10);
+  var deficit = tdee - suggested;
+  if (wantsLoss && !red.length && deficit > 0) {
+    weekly = deficit * 7 / 7700;
+    lines.push("Suggested starting target: " + comma(suggested) + " kcal a day (" + label + "). That's about " + comma(deficit) + " kcal a day under maintenance, " +
+      "roughly " + kg1(weekly) + " kg a week (" + (weekly / kg * 100).toFixed(1) + "% of bodyweight)");
+    if (toLose > 0) {
+      weeks = Math.ceil(toLose / weekly);
+      lines.push("To lose " + kg1(toLose) + " kg (goal " + kg1(goalKg) + " kg): about " + weeks + " weeks at this rate, plus breaks. Real progress is rarely a straight line");
+    }
+  } else {
+    lines.push("Suggested starting target: " + comma(suggested) + " kcal a day (" + label + ")");
+  }
+
+  // Their date, if they gave one
+  var by = String(get("Reach it by") || "");
+  var dm = by.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (toLose > 0 && dm && !red.length) {
+    var days = (new Date(+dm[3], +dm[2] - 1, +dm[1]) - new Date()) / 86400000;
+    if (days > 0) {
+      var need = toLose * 7700 / days, needWeekly = toLose / (days / 7);
+      var tooFast = need > tdee * 0.25 || needWeekly > kg * 0.01;
+      lines.push("To reach it by " + by + " they'd need about " + comma(need) + " kcal a day under maintenance (" + kg1(needWeekly) + " kg a week). " +
+        (tooFast ? "That's faster than is sustainable, so worth resetting expectations" : "That's realistic"));
+      if (tooFast && !red.length) amber.push("Their date (" + by + ") would need more than a safe rate of loss");
+    }
+  }
+
+  // Macros for the suggested target
+  var refKg = bmi >= 30 ? 25 * m * m : kg; // protein from a healthy reference weight if BMI is 30+
+  var protein = round(refKg * (wantsLoss || wantsMuscle ? 1.8 : 1.6), 5);
+  var fat = round(Math.max(suggested * 0.28 / 9, kg * 0.6), 5);
+  var carbs = round(Math.max((suggested - protein * 4 - fat * 9) / 4, 0), 5);
+  lines.push("Macros: protein " + protein + " g (" + (wantsLoss || wantsMuscle ? "1.8" : "1.6") + " g per kg" + (bmi >= 30 ? " of a reference weight of " + kg1(refKg) + " kg" : "") + ", range 1.6 to 2.2), " +
+    "fat " + fat + " g (about 28%), carbs " + carbs + " g (the rest)");
+  lines.push("Fibre " + (female ? 25 : 30) + " g a day. Water about " + kg1(kg * 0.035) + " L a day, plus extra on training days");
+  lines.push("These are starting estimates. Check the trend over 2 to 3 weeks and adjust");
+
+  var headsUp = red.length ? "HOLD OFF ON A DEFICIT: " + red.join("; ") + (amber.length ? ". Also: " + amber.join("; ") : "")
+    : amber.join("; ");
+  return {
+    red: red, amber: amber, headsUp: headsUp, lines: lines,
+    bmr: Math.round(bmr), tdee: Math.round(tdee), suggested: suggested, protein: protein, carbs: carbs, fat: fat,
+    weekly: weekly ? kg1(weekly) : "", weeks: weeks || "", bmi: Math.round(bmi * 10) / 10
+  };
+}
+
+/** Saves a PDF of each questionnaire in your Drive, links it on the row, and emails you everything. */
+function notifyNutrition_(ss, list) {
+  list.forEach(function (s) {
+    var pdf = null;
+    try { pdf = nutritionPdf_(ss, s); } catch (err) { /* the answers are already on the row */ }
+    try {
+      var to = Session.getEffectiveUser().getEmail();
+      if (!to) return;
+      var sheet = ss.getSheetByName(NUTRITION_TAB);
+      var link = ss.getUrl() + (sheet ? "#gid=" + sheet.getSheetId() : "");
+      var html = nutritionHtml_(s, "email") + '<p style="margin-top:20px"><a href="' + link + '">Open the Nutrition tab</a></p>';
+      var text = nutritionText_(s) + "\n\nIt's all on the Nutrition tab:\n" + link;
+      var mail = { to: to, subject: "ScoutCo: " + s.name + "'s nutrition questionnaire" + (s.calc.red.length ? " (heads up)" : ""),
+        body: text, htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1a1a1a">' + html + "</div>" };
+      if (pdf) mail.attachments = [pdf.getBlob()];
+      MailApp.sendEmail(mail);
+    } catch (err) { /* email is a bonus; the answers are already saved */ }
+  });
+}
+
+/** The heads up, the numbers and every answer, as HTML (for the email and the PDF). */
+function nutritionHtml_(s, kind) {
+  var calc = s.calc, out = [];
+  if (calc.red.length) {
+    out.push('<div style="background:#fde8e8;color:#8a1c1c;padding:10px 12px;border-radius:8px;margin:0 0 10px"><b>Hold off on a calorie deficit for now.</b> ' +
+      "Have a gentle chat first, and think about referring them to their GP or a dietitian. If it's about eating, the Butterfly Foundation helpline is 1800 33 4673." +
+      "<ul style=\"margin:6px 0 0;padding-left:18px\">" + calc.red.map(function (r) { return "<li>" + esc_(r) + "</li>"; }).join("") + "</ul></div>");
+  }
+  if (calc.amber.length) {
+    out.push('<div style="background:#fef3c7;color:#78350f;padding:10px 12px;border-radius:8px;margin:0 0 10px"><b>Go gently:</b>' +
+      "<ul style=\"margin:6px 0 0;padding-left:18px\">" + calc.amber.map(function (r) { return "<li>" + esc_(r) + "</li>"; }).join("") + "</ul></div>");
+  }
+  if (calc.suggested) {
+    var tile = function (k, v) { return '<td style="padding:8px 10px;background:#f3f0fa;border-radius:6px;text-align:center"><div style="font-size:' + (kind === "pdf" ? 16 : 20) + 'px;font-weight:bold">' + esc_(v) + '</div><div style="font-size:11px;color:#5f5f5f">' + esc_(k) + "</div></td>"; };
+    out.push('<table style="border-collapse:separate;border-spacing:6px;margin:4px -6px 6px"><tr>' +
+      tile("Suggested kcal a day", String(calc.suggested).replace(/\B(?=(\d{3})+(?!\d))/g, ",")) + tile("Maintenance", String(calc.tdee).replace(/\B(?=(\d{3})+(?!\d))/g, ",")) +
+      tile("Protein", calc.protein + " g") + tile("Carbs", calc.carbs + " g") + tile("Fat", calc.fat + " g") + "</tr></table>");
+  }
+  out.push('<h3 style="margin:14px 0 6px;color:#7D4FB3;font-size:14px;text-transform:uppercase">The numbers</h3>' +
+    "<ul style=\"margin:0;padding-left:18px\">" + calc.lines.map(function (l) { return "<li style=\"margin:3px 0\">" + esc_(l) + "</li>"; }).join("") + "</ul>");
+  var section = "";
+  s.answers.forEach(function (a) {
+    if (!a[2]) return;
+    if (a[0] !== section) {
+      section = a[0];
+      out.push('<h3 style="margin:16px 0 4px;color:#7D4FB3;font-size:14px;text-transform:uppercase">' + esc_(section) + "</h3>");
+    }
+    out.push('<p style="margin:3px 0"><b>' + esc_(a[1]) + ":</b> " + esc_(a[2]).replace(/\n/g, "<br>") + "</p>");
+  });
+  return out.join("");
+}
+
+function nutritionText_(s) {
+  var calc = s.calc, out = [];
+  if (calc.red.length) out.push("HOLD OFF ON A CALORIE DEFICIT FOR NOW. Have a gentle chat first, and think about referring them to their GP or a dietitian. Butterfly Foundation helpline: 1800 33 4673.\n- " + calc.red.join("\n- "));
+  if (calc.amber.length) out.push("GO GENTLY:\n- " + calc.amber.join("\n- "));
+  out.push("THE NUMBERS\n- " + calc.lines.join("\n- "));
+  var section = "";
+  s.answers.forEach(function (a) {
+    if (!a[2]) return;
+    var line = a[1] + ": " + a[2];
+    if (a[0] !== section) { section = a[0]; out.push(section.toUpperCase() + "\n" + line); }
+    else out[out.length - 1] += "\n" + line;
+  });
+  return out.join("\n\n");
+}
+
+/** Makes "Nutrition - <name> - <date>.pdf" in the ScoutCo nutrition folder and links it on their row. */
+function nutritionPdf_(ss, s) {
+  var tz = ss.getSpreadsheetTimeZone(), now = new Date();
+  var html = '<html><body style="font-family:Arial,sans-serif;font-size:11px;color:#111;line-height:1.4">' +
+    '<h1 style="font-size:20px;margin:0 0 4px">' + esc_(s.name) + "</h1>" +
+    '<p style="color:#5f5f5f;margin:0 0 10px">Nutrition questionnaire, answered in the ScoutCo app on ' + esc_(Utilities.formatDate(now, tz, "d MMMM yyyy, h:mm a")) + "</p>" +
+    nutritionHtml_(s, "pdf") + "</body></html>";
+  var fileName = "Nutrition - " + String(s.name).replace(/[\\\/:*?"<>|]/g, "") + " - " + Utilities.formatDate(now, tz, "yyyy-MM-dd") + ".pdf";
+  var file = nutritionFolder_().createFile(Utilities.newBlob(html, "text/html", "nutrition.html").getAs("application/pdf").setName(fileName));
+  var sheet = ss.getSheetByName(NUTRITION_TAB);
+  if (sheet && s.row) {
+    var c = nutritionCols_(sheet);
+    if (c.PDF) sheet.getRange(s.row, c.PDF).setFormula('=HYPERLINK("' + file.getUrl() + '","Open PDF")');
+  }
+  return file;
+}
+
+/** The "ScoutCo nutrition" folder in your Drive (made the first time). Only you can open it. */
+function nutritionFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("nutritionFolder");
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(NUTRITION_FOLDER);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(NUTRITION_FOLDER);
+  props.setProperty("nutritionFolder", folder.getId());
+  return folder;
 }
