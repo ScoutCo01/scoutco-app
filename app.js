@@ -21,6 +21,8 @@
   var KEY_INSTALL_DISMISSED = "scoutco.installDismissed";
   var KEY_AGREE = "scoutco.agreeSigned";
   var KEY_RENEW = "scoutco.renewSeen";
+  var KEY_NUTRI_SENT = "scoutco.nutritionSent";
+  var KEY_NUTRI_DRAFT = "scoutco.nutritionDraft";
   var KEY_MSG_REACT = "scoutco.msgReact";
   var KEY_CLASS_REACT = "scoutco.classReact"; // class members' reactions not yet back from the sheet: { "<code>|<week key>": { emoji, comment } }
 
@@ -31,7 +33,7 @@
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
       view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
       commDraft: "", commPhoto: null, commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
-      upload: null, playing: null, ag: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "", classOpen: null, classDrafts: {} };
+      upload: null, playing: null, ag: null, nu: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "", classOpen: null, classDrafts: {} };
   }
   var state = freshState();
 
@@ -187,7 +189,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW); remove(KEY_MSG_REACT);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW); remove(KEY_NUTRI_SENT); remove(KEY_NUTRI_DRAFT); remove(KEY_MSG_REACT);
     videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
@@ -205,7 +207,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "renewal" || ev.type === "msgreact" || ev.type === "classreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "nutrition" || ev.type === "renewal" || ev.type === "msgreact" || ev.type === "classreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -540,6 +542,7 @@
     if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"]];
     else if (isClass()) {
       v = [["program", "Workouts"], ["community", "Lift Club Community"], ["profile", "Profile"]];
+      if (nutrition()) v.push(["nutrition", "Nutrition"]);
       if (agreement()) v.push(["agreement", "Agreement"]);
     } else {
       v = [["program", "Program"]];
@@ -548,6 +551,7 @@
       v.push(["videos", "My videos"]);
       v.push(["community", "Lift Club Community"]);
       v.push(["profile", "Profile"]);
+      if (nutrition()) v.push(["nutrition", "Nutrition"]);
       if (agreement()) v.push(["agreement", "Agreement"]);
     }
     if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
@@ -565,7 +569,7 @@
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) || (v[0] === "agreement" && agreementDue()) ? '<span class="dot" aria-label="to do"></span>' : "") +
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) || (v[0] === "agreement" && agreementDue()) || (v[0] === "nutrition" && nutritionDue()) ? '<span class="dot" aria-label="to do"></span>' : "") +
         (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") +
         (v[0] === "videos" && toReview ? '<span class="count" aria-label="' + toReview + ' to check">' + toReview + "</span>" : "") + "</button>";
     }).join("");
@@ -579,6 +583,7 @@
     $("communityPane").classList.toggle("hidden", state.view !== "community");
     $("videosPane").classList.toggle("hidden", state.view !== "videos");
     $("agreementPane").classList.toggle("hidden", state.view !== "agreement");
+    $("nutritionPane").classList.toggle("hidden", state.view !== "nutrition");
   }
 
   // Links to the ScoutCo website, set in config.js (websiteLinks).
@@ -2194,6 +2199,270 @@
       '<button class="btn primary" data-goto-agreement>Read and sign</button>';
   }
 
+  // ---------- nutrition questionnaire ----------
+  // Kirst adds a row on the Nutrition tab and ticks "Send to app". The client fills it in here.
+  // The sheet works out the calorie and macro numbers for Kirst; the client doesn't see them.
+  // Answers go to the sheet as [section, column heading, answer]. The headings for sex, age, height,
+  // weight, goals, activity and the food relationship questions are read by nutritionCalc_ in Code.gs,
+  // so keep them (and the option wording) in step.
+  var NUTRITION_ACTIVITY = [
+    "Sedentary: desk job, little or no exercise",
+    "Lightly active: light exercise or sport 1 to 3 days a week",
+    "Moderately active: exercise or sport 3 to 5 days a week",
+    "Very active: hard exercise or sport 6 to 7 days a week",
+    "Extra active: hard daily training plus a physical job"];
+  var NUTRITION_FORM = [
+    { title: "About you", fields: [
+      { id: "units", label: "Units", q: "Which units do you use?", type: "radio", options: ["kg and cm", "lb, feet and inches"], req: true },
+      { id: "sex", label: "Sex", q: "Sex", hint: "The calorie formulas are different for males and females.", type: "radio", options: ["Female", "Male", "Prefer not to say"], req: true },
+      { id: "dob", label: "Date of birth", q: "Date of birth", type: "date", req: true },
+      { id: "height", label: "Height (cm)", q: "Height", type: "height", req: true },
+      { id: "weight", label: "Weight (kg)", q: "Weight right now", hint: "Your best guess is fine.", type: "weight", req: true },
+      { id: "bf", label: "Body fat %", q: "Body fat %", hint: "Only if you've had a body scan. Leave blank if not.", type: "number", opt: true },
+      { id: "preg", label: "Pregnant or breastfeeding", q: "Are you pregnant or breastfeeding?", type: "radio", options: ["No", "Pregnant", "Breastfeeding", "Trying to get pregnant", "Prefer to talk in person"] },
+      { id: "cond", label: "Health conditions", q: "Do you have any of these?", hint: "Tick any that apply.", type: "checks",
+        options: ["Diabetes or pre-diabetes", "PCOS", "Thyroid condition", "IBS or gut issues", "Coeliac disease", "High blood pressure", "High cholesterol", "Low iron", "None"] },
+      { id: "meds", label: "Medications and supplements", q: "Any medications or supplements?", hint: "E.g. protein powder, creatine, iron, the pill, Ozempic.", type: "textarea", opt: true }
+    ] },
+    { title: "Your goals", fields: [
+      { id: "goals", label: "Main goals", q: "What would you like help with?", hint: "Pick as many as you like.", type: "checks", req: true,
+        options: ["Lose body fat", "Build muscle", "Fuel my training or sport", "More energy", "Eat healthier in general", "A better relationship with food", "Help with gut health", "Other"] },
+      { id: "goalText", label: "Goals in their words", q: "Tell " + COACH + " more, in your own words", hint: "What would make the next 12 weeks a win for you?", type: "textarea" },
+      { id: "lose", label: "Weight to lose (kg)", q: "How much weight would you like to lose?", hint: "Leave blank if you're not sure, or you'd rather not focus on the scale.", type: "weight", opt: true },
+      { id: "by", label: "Reach it by", q: "Is there a date you'd like to reach it by?", hint: "E.g. a wedding, holiday or comp. Leave blank if not.", type: "date", opt: true },
+      { id: "pace", label: "Pace", q: "How fast would you like to go?", type: "radio", options: ["Slow and steady", "Somewhere in the middle", "As fast as is safe"] }
+    ] },
+    { title: "Your activity", fields: [
+      { id: "act", label: "Activity level", q: "Which best describes a normal week for you?", hint: "Count your training and sport, and your job.", type: "radio", req: true, options: NUTRITION_ACTIVITY },
+      { id: "job", label: "Work", q: "What's your work like?", type: "radio", options: ["Mostly sitting", "Mix of sitting and on my feet", "On my feet most of the day", "Physical work (lifting, labouring)", "Not working at the moment"] },
+      { id: "hours", label: "Work hours", q: "What hours do you work?", hint: "E.g. 7am to 3:30pm Mon to Fri, or rotating shifts.", type: "text" },
+      { id: "train", label: "Training days a week", q: "How many days a week do you train or play sport?", type: "radio", options: ["0", "1 to 2", "3 to 4", "5 to 6", "7+"] },
+      { id: "steps", label: "Daily steps", q: "Roughly how many steps a day?", type: "radio", options: ["Under 5,000", "5,000 to 7,500", "7,500 to 10,000", "10,000 to 12,500", "Over 12,500", "No idea"] }
+    ] },
+    { title: "How you eat now", fields: [
+      { id: "times", label: "Meals and snacks a day", q: "How many times a day do you usually eat?", hint: "Meals and snacks.", type: "radio", options: ["1 to 2", "3", "4", "5", "6+"] },
+      { id: "day", label: "A normal day of eating", q: "Walk " + COACH + " through a normal day of eating", hint: "Breakfast, lunch, dinner, snacks and drinks. Rough is fine.", type: "textarea" },
+      { id: "rotation", label: "Meals on repeat", q: "What meals and foods do you have on repeat?", type: "textarea" },
+      { id: "cook", label: "Who cooks", q: "Who does most of the cooking?", type: "radio", options: ["Me", "My partner or family", "A mix", "Mostly takeaway or eating out"] },
+      { id: "skill", label: "Cooking", q: "How do you feel about cooking?", type: "radio", options: ["I love it", "I can follow a recipe", "Basics only", "Not my thing"] },
+      { id: "takeaway", label: "Takeaway or eating out a week", q: "Takeaway or eating out, times a week", type: "radio", options: ["0", "1 to 2", "3 to 4", "5+"] },
+      { id: "water", label: "Water a day", q: "Water a day", type: "radio", options: ["Under 1 L", "1 to 2 L", "2 to 3 L", "3 L+"] },
+      { id: "alcohol", label: "Alcohol a week", q: "Alcoholic drinks a week", type: "radio", options: ["None", "1 to 3", "4 to 7", "8 to 14", "15+"] },
+      { id: "drinks", label: "Other drinks", q: "Other drinks", hint: "Coffee, tea, soft drink, energy drinks, juice. How many a day?", type: "text" },
+      { id: "budget", label: "Food budget", q: "How's your food budget?", type: "radio", options: ["Tight", "Moderate", "Comfortable"] },
+      { id: "track", label: "Tracking food", q: "How do you feel about tracking what you eat (e.g. in an app)?", type: "radio", options: ["Happy to", "Willing to give it a go", "I'd rather not", "It's not good for me"] }
+    ] },
+    { title: "Foods you like", intro: "Tick the ones you like and would happily eat. This is how " + COACH + " builds meals you'll actually enjoy.", fields: [
+      { id: "protein", label: "Proteins they like", q: "Proteins", type: "checks", options: ["Chicken", "Beef", "Lamb", "Pork", "Turkey", "Kangaroo", "Fish", "Tuna or salmon (tinned)", "Prawns and seafood", "Eggs", "Greek yoghurt", "Cottage cheese", "Cheese", "Milk", "Tofu", "Tempeh", "Lentils", "Chickpeas", "Beans", "Protein powder"] },
+      { id: "carbs", label: "Carbs they like", q: "Carbs", type: "checks", options: ["Rice", "Pasta", "Bread", "Wraps", "Potato", "Sweet potato", "Oats", "Cereal", "Muesli or granola", "Quinoa", "Couscous", "Noodles", "Corn", "Crackers or rice cakes", "Sourdough", "Bagels"] },
+      { id: "fruit", label: "Fruit they like", q: "Fruit", type: "checks", options: ["Apple", "Banana", "Berries", "Orange or mandarin", "Grapes", "Kiwi fruit", "Mango", "Pineapple", "Watermelon or melon", "Pear", "Stone fruit", "Dried fruit"] },
+      { id: "veg", label: "Veggies they like", q: "Veggies", type: "checks", options: ["Broccoli", "Carrot", "Spinach or leafy greens", "Salad leaves", "Tomato", "Cucumber", "Capsicum", "Zucchini", "Mushroom", "Green beans", "Peas", "Cauliflower", "Pumpkin", "Onion", "Avocado", "Asparagus", "Brussels sprouts", "Sweet corn", "Beetroot", "Frozen veg mix"] },
+      { id: "fats", label: "Fats and extras they like", q: "Fats and extras", type: "checks", options: ["Nuts", "Peanut butter", "Olive oil", "Seeds", "Hummus", "Dark chocolate", "Butter"] },
+      { id: "love", label: "Other foods they love", q: "Any other foods or treats you love?", type: "textarea", opt: true },
+      { id: "wont", label: "Will NOT eat", q: "Foods you definitely will NOT eat", hint: "Anything you dislike, won't touch, or that just doesn't work for you.", type: "textarea" }
+    ] },
+    { title: "Allergies and dietary needs", fields: [
+      { id: "allergy", label: "Allergies", q: "Food allergies", type: "checks", options: ["None", "Peanuts", "Tree nuts", "Milk", "Eggs", "Fish", "Shellfish", "Soy", "Wheat", "Sesame", "Lupin", "Other"] },
+      { id: "allergyMore", label: "Allergy details", q: "Tell " + COACH + " more about any allergies", hint: "What happens, how severe, and whether you carry an EpiPen.", type: "text", opt: true },
+      { id: "intol", label: "Intolerances", q: "Food intolerances", hint: "Foods that don't agree with you.", type: "checks", options: ["None", "Lactose", "Gluten", "FODMAPs", "Fructose", "Caffeine", "Spicy food", "Other"] },
+      { id: "intolMore", label: "Intolerance details", q: "Tell " + COACH + " more about any intolerances", type: "text", opt: true },
+      { id: "diet", label: "Way of eating", q: "Do you follow any of these?", type: "checks", options: ["No restrictions", "Vegetarian", "Vegan", "Pescatarian", "Halal", "Kosher", "No pork", "No beef", "Other"] },
+      { id: "reasons", label: "Won't eat for personal, ethical or religious reasons", q: "Anything you don't eat for personal, ethical or religious reasons?", type: "textarea", opt: true },
+      { id: "fasting", label: "Fasting", q: "Do you fast at any time?", hint: "E.g. Ramadan, Lent, or fasting days.", type: "text", opt: true }
+    ] },
+    { title: "Your work day", fields: [
+      { id: "fridge", label: "Fridge at work", q: "Can you keep food in a fridge during work hours?", type: "radio", req: true, options: ["Yes", "No", "Sometimes", "I work from home"] },
+      { id: "micro", label: "Microwave at work", q: "Can you heat food up at work?", type: "radio", options: ["Yes", "No", "Sometimes"] },
+      { id: "breaks", label: "Breaks at work", q: "Can you eat when you need to at work?", type: "radio", options: ["Yes, whenever I like", "Only at set breaks", "Hard to get a break", "It changes"] },
+      { id: "workMore", label: "Eating at work notes", q: "Anything else about eating at work?", hint: "E.g. on the road all day, no time for lunch, shared lunches.", type: "text", opt: true }
+    ] },
+    { title: "Your relationship with food", intro: "These questions are private and only " + COACH + " sees them. There are no right or wrong answers. " +
+        "They help " + COACH + " support you in a way that's good for you, not just your goals. Skip anything you'd rather talk about in person.",
+      footer: "If any of this feels heavy right now, you can talk to the Butterfly Foundation helpline on 1800 33 4673 (free and confidential), or your GP.", fields: [
+      { id: "rel", label: "Relationship with food", q: "How would you describe your relationship with food right now?", type: "radio", options: ["Really good", "Mostly good", "Up and down", "A struggle", "Prefer not to say"] },
+      { id: "sounds", label: "Sounds like me", q: "Do any of these sound like you, often or sometimes?", hint: "Tick any that fit.", type: "checks", options: [
+        "I eat when I'm stressed, sad, bored or tired",
+        "I feel guilty or anxious after eating some foods",
+        "I have strict rules about food, or see foods as good and bad",
+        "I often skip meals because I'm busy or not hungry",
+        "I sometimes eat a large amount in a short time and feel like I can't stop",
+        "I avoid eating or cut right back to control my weight",
+        "I make up for eating by vomiting, taking laxatives or exercising it off",
+        "My weight or shape has a big effect on how I feel about myself",
+        "I've lost a lot of weight quickly in the past year",
+        "None of these"] },
+      { id: "ed", label: "Eating disorder history", q: "Have you ever been diagnosed with, or had support for, an eating disorder?", type: "radio", options: ["No", "Yes, in the past", "Yes, and I'm getting support now", "I'd rather talk about it in person"] },
+      { id: "relMore", label: "About food and their body", q: "Anything you'd like " + COACH + " to know about how you feel about food or your body?", type: "textarea", opt: true }
+    ] },
+    { title: "Last bits", fields: [
+      { id: "else", label: "Anything else", q: "Anything else you'd like " + COACH + " to know?", type: "textarea", opt: true },
+      { id: "agree", label: "Agreed", q: "My answers are true to the best of my knowledge. I understand this is nutrition coaching, not medical treatment, and I'll talk to my GP about any medical concerns.", type: "agree", req: true }
+    ] }
+  ];
+
+  function nutrition() { return !isCoach() && state.data && state.data.nutrition && state.data.nutrition.id ? state.data.nutrition : null; }
+  function nutritionLocal() {
+    var n = nutrition(), s = load(KEY_NUTRI_SENT, null);
+    return n && s && s.code === state.code && s.id === n.id ? s : null;
+  }
+  function nutritionDone() { var n = nutrition(); return !!(n && (n.done || nutritionLocal())); }
+  function nutritionDue() { return !!nutrition() && !nutritionDone(); }
+  // What they've typed so far, kept on the phone so nothing is lost if they close the app half way.
+  function nutritionDraft() {
+    var n = nutrition();
+    if (!state.nu || state.nu.id !== n.id) {
+      var saved = load(KEY_NUTRI_DRAFT, null);
+      state.nu = saved && saved.code === state.code && saved.id === n.id ? { id: n.id, v: saved.v || {} } : { id: n.id, v: {} };
+      if (!state.nu.v.units) state.nu.v.units = "kg and cm";
+    }
+    return state.nu;
+  }
+  function saveNutritionDraft() { if (state.nu) save(KEY_NUTRI_DRAFT, { code: state.code, id: state.nu.id, v: state.nu.v }); }
+  function nuImperial() { return state.nu && /lb/.test(state.nu.v.units || ""); }
+  function nuNum(x) { var n = parseFloat(String(x == null ? "" : x).replace(",", ".")); return isFinite(n) ? n : 0; }
+  function nuAge(dob) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dob || "")) return 0;
+    var d = new Date(dob + "T00:00:00"), n = new Date(), a = n.getFullYear() - d.getFullYear();
+    if (n.getMonth() < d.getMonth() || (n.getMonth() === d.getMonth() && n.getDate() < d.getDate())) a--;
+    return a;
+  }
+  // Height in cm and weights in kg, whichever units they typed.
+  function nuCm(v) { return nuImperial() ? Math.round((nuNum(v.height_ft) * 12 + nuNum(v.height_in)) * 2.54) : Math.round(nuNum(v.height)); }
+  function nuKg(v, id) { var n = nuNum(v[id]); return nuImperial() ? Math.round(n * 0.453592 * 10) / 10 : Math.round(n * 10) / 10; }
+
+  function nuField(f, v, bad) {
+    var val = v[f.id];
+    var head = '<div class="nu-q' + (bad[f.id] ? " nu-bad" : "") + '" data-nu-q="' + f.id + '">';
+    if (f.type === "agree") {
+      return head + '<label class="ag-check"><input type="checkbox" data-nu-check="' + f.id + '"' + (val ? " checked" : "") + "> <span>" + esc(f.q) + "</span></label></div>";
+    }
+    var label = '<label class="ci-label" for="nu-' + f.id + '">' + esc(f.q) + (f.req ? ' <span class="nu-req">*</span>' : f.opt ? ' <span class="muted">(optional)</span>' : "") + "</label>" +
+      (f.hint ? '<p class="nu-hint">' + esc(f.hint) + "</p>" : "");
+    var input = function (id, type, ph, extra) {
+      return '<input id="nu-' + id + '" class="ci-input" data-nu="' + id + '" type="' + type + '"' + (type === "number" ? ' inputmode="decimal" min="0" step="any"' : ' maxlength="300"') +
+        (ph ? ' placeholder="' + esc(ph) + '"' : "") + ' value="' + esc(v[id] || "") + '"' + (extra || "") + ">";
+    };
+    var body;
+    if (f.type === "radio" || f.type === "checks") {
+      var list = f.type === "checks" ? (val || []) : [];
+      body = '<div class="nu-opts">' + f.options.map(function (o) {
+        var on = f.type === "checks" ? list.indexOf(o) !== -1 : val === o;
+        return '<label class="nu-opt"><input type="' + (f.type === "checks" ? "checkbox" : "radio") + '" name="nu-' + f.id + '" data-nu-' + (f.type === "checks" ? "multi" : "pick") + '="' + f.id + '" value="' + esc(o) + '"' + (on ? " checked" : "") + "> <span>" + esc(o) + "</span></label>";
+      }).join("") + "</div>";
+    } else if (f.type === "textarea") {
+      body = '<textarea id="nu-' + f.id + '" class="ci-input" data-nu="' + f.id + '" rows="3" maxlength="2000">' + esc(val || "") + "</textarea>";
+    } else if (f.type === "height") {
+      body = nuImperial() ? '<div class="nu-pair">' + input("height_ft", "number", "feet") + '<span>ft</span>' + input("height_in", "number", "inches") + "<span>in</span></div>"
+        : '<div class="nu-pair">' + input("height", "number", "e.g. 168") + "<span>cm</span></div>";
+    } else if (f.type === "weight") {
+      body = '<div class="nu-pair">' + input(f.id, "number", nuImperial() ? "" : "") + "<span>" + (nuImperial() ? "lb" : "kg") + "</span></div>";
+    } else if (f.type === "date") {
+      body = input(f.id, "date", "");
+    } else {
+      body = input(f.id, f.type === "number" ? "number" : "text", "");
+    }
+    return head + label + body + (bad[f.id] ? '<p class="error nu-err">' + esc(bad[f.id]) + "</p>" : "") + "</div>";
+  }
+
+  function renderNutrition() {
+    var n = nutrition(), pane = $("nutritionPane");
+    if (!n) { pane.innerHTML = ""; return; }
+    if (nutritionDone()) {
+      var mine = nutritionLocal(), on = (mine && mine.at) || n.doneOn || 0;
+      var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "nutrition"; });
+      pane.innerHTML = '<section class="card ag-signed"><div class="ag-tick" aria-hidden="true">✓</div><div><strong>Sent to ' + esc(COACH) + "</strong>" +
+        '<div class="small muted">' + (on ? esc(new Date(+on).toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric" })) : "") +
+        (pending && canSend() ? " · Sending…" : "") + "</div></div></section>" +
+        '<section class="card"><h2>Thanks for filling it in</h2><p>' + esc(COACH) + " will go through your answers and get back to you about your nutrition. " +
+        "If anything changes in the meantime, just let " + esc(COACH) + " know.</p></section>";
+      return;
+    }
+    var d = nutritionDraft(), bad = d.bad || {};
+    pane.innerHTML = '<section class="card"><h2>Nutrition questionnaire</h2>' +
+      '<p class="muted small">This helps ' + esc(COACH) + " work out your energy needs and build a plan around the food you like, your day and your goals. " +
+      'It takes about 10 minutes, and your answers save on this phone as you go. Questions with a <span class="nu-req">*</span> are needed.</p></section>' +
+      NUTRITION_FORM.map(function (s) {
+        return '<section class="card nu-section"><h3>' + esc(s.title) + "</h3>" + (s.intro ? '<p class="muted small">' + esc(s.intro) + "</p>" : "") +
+          s.fields.map(function (f) { return nuField(f, d.v, bad); }).join("") +
+          (s.footer ? '<p class="nu-help small">' + esc(s.footer) + "</p>" : "") + "</section>";
+      }).join("") +
+      '<section class="card">' + (d.error ? '<p class="error">' + esc(d.error) + "</p>" : "") +
+        '<div class="ci-actions"><span class="small muted">Only ' + esc(COACH) + ' sees your answers.</span><button class="btn primary" data-nu-send>Send to ' + esc(COACH) + "</button></div></section>";
+  }
+
+  function nutritionAnswers(v) {
+    var out = [], imp = nuImperial();
+    NUTRITION_FORM.forEach(function (s) {
+      s.fields.forEach(function (f) {
+        var a;
+        if (f.id === "units") return;
+        if (f.type === "checks") a = (v[f.id] || []).join(", ");
+        else if (f.type === "agree") a = v[f.id] ? "Yes" : "";
+        else if (f.type === "height") a = String(nuCm(v) || "");
+        else if (f.type === "weight") a = nuNum(v[f.id]) ? String(nuKg(v, f.id)) : "";
+        else if (f.type === "date") a = /^\d{4}-\d{2}-\d{2}$/.test(v[f.id] || "") ? v[f.id].split("-").reverse().join("/") : "";
+        else a = String(v[f.id] || "").trim();
+        out.push([s.title, f.label, a]);
+        if (f.id === "dob") out.push([s.title, "Age", String(nuAge(v.dob) || "")]);
+        if (f.id === "weight" && imp) out.push([s.title, "Entered in", nuNum(v.height_ft) + " ft " + nuNum(v.height_in) + " in, " + nuNum(v.weight) + " lb" + (nuNum(v.lose) ? ", lose " + nuNum(v.lose) + " lb" : "")]);
+      });
+    });
+    return out;
+  }
+
+  function sendNutrition() {
+    var n = nutrition(), d = state.nu;
+    if (!n || !d) return;
+    var v = d.v, bad = {};
+    NUTRITION_FORM.forEach(function (s) {
+      s.fields.forEach(function (f) {
+        var x = v[f.id];
+        if (f.type === "height") {
+          var cm = nuCm(v);
+          if (!cm) bad[f.id] = "Please add your height.";
+          else if (cm < 120 || cm > 230) bad[f.id] = "Please check your height.";
+        } else if (f.type === "weight" && (f.req || nuNum(x))) {
+          var kg = nuKg(v, f.id);
+          if (f.req && !kg) bad[f.id] = "Please add your weight.";
+          else if (f.id === "weight" && (kg < 30 || kg > 300)) bad[f.id] = "Please check your weight.";
+          else if (f.id === "lose" && (kg < 0 || kg >= nuKg(v, "weight") * 0.5)) bad[f.id] = "Please check this number.";
+        } else if (f.id === "dob") {
+          var age = nuAge(x);
+          if (!x) bad[f.id] = "Please add your date of birth.";
+          else if (age < 10 || age > 100) bad[f.id] = "Please check your date of birth.";
+        } else if (f.req && (f.type === "checks" ? !(x && x.length) : !x)) {
+          bad[f.id] = f.type === "agree" ? "Please tick this to send." : f.type === "checks" ? "Please pick at least one." : f.type === "radio" ? "Please pick one." : "Please fill this in.";
+        }
+      });
+    });
+    d.bad = bad;
+    var keys = Object.keys(bad);
+    if (keys.length) {
+      d.error = "A few answers still need filling in. They're marked in red.";
+      renderNutrition();
+      var first = document.querySelector('[data-nu-q="' + keys[0] + '"]');
+      if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    d.error = "";
+    queue({ type: "nutrition", key: n.id, answers: nutritionAnswers(v) });
+    save(KEY_NUTRI_SENT, { code: state.code, id: n.id, at: Date.now() });
+    remove(KEY_NUTRI_DRAFT);
+    state.nu = null;
+    render();
+    window.scrollTo(0, 0);
+  }
+
+  // A card on the Program tab until they've sent it.
+  function renderNutriNudge() {
+    var el = $("nutriNudge"), due = nutritionDue();
+    el.classList.toggle("hidden", !due);
+    if (!due) return;
+    el.innerHTML = "<div><strong>Your nutrition questionnaire is ready</strong>" +
+      "<div>Tell " + esc(COACH) + " about how you eat, the food you like and your goals. It takes about 10 minutes.</div></div>" +
+      '<button class="btn primary" data-goto-nutrition>Fill it in</button>';
+  }
+
   // ---------- renewal notice ----------
   // Before a client's next block, Kirst ticks a row on the Renewals tab and it shows here. Nothing to sign.
   function renewal() { return !isCoach() && state.data && state.data.renewal && state.data.renewal.id ? state.data.renewal : null; }
@@ -2442,8 +2711,10 @@
     if (state.view === "community") renderCommunity();
     if (state.view === "videos") renderVideos();
     if (state.view === "agreement") renderAgreement();
+    if (state.view === "nutrition") renderNutrition();
     renderProfileNudge();
     renderAgreeNudge();
+    renderNutriNudge();
     renderRenewNote();
 
     var note = $("coachNote");
@@ -2905,6 +3176,47 @@
   $("agreementPane").addEventListener("click", function (e) {
     if (e.target.closest("[data-ag-sign]")) signAgreement();
   });
+  $("nutriNudge").addEventListener("click", function (e) {
+    if (!e.target.closest("[data-goto-nutrition]")) return;
+    state.view = "nutrition";
+    render();
+    window.scrollTo(0, 0);
+  });
+  $("nutritionPane").addEventListener("input", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-nu");
+    if (!f || !state.nu) return;
+    state.nu.v[f] = e.target.value;
+    var box = e.target.closest(".nu-q"), q = box && box.getAttribute("data-nu-q");
+    if (q && state.nu.bad && state.nu.bad[q]) {
+      delete state.nu.bad[q];
+      box.classList.remove("nu-bad");
+      var m = box.querySelector(".nu-err"); if (m) m.remove();
+    }
+    saveNutritionDraft();
+  });
+  $("nutritionPane").addEventListener("change", function (e) {
+    var t = e.target, d = state.nu;
+    if (!d || !t.getAttribute) return;
+    var pick = t.getAttribute("data-nu-pick"), multi = t.getAttribute("data-nu-multi"), check = t.getAttribute("data-nu-check");
+    if (pick) d.v[pick] = t.value;
+    if (check) d.v[check] = t.checked;
+    if (multi) {
+      var list = (d.v[multi] || []).filter(function (x) { return x !== t.value; });
+      if (t.checked) list.push(t.value);
+      // "None" can't go with anything else.
+      var none = /^(none|no restrictions)/i;
+      if (t.checked) list = none.test(t.value) ? [t.value] : list.filter(function (x) { return !none.test(x); });
+      d.v[multi] = list;
+      if (t.checked) t.closest(".nu-opts").querySelectorAll("input").forEach(function (i) { i.checked = list.indexOf(i.value) !== -1; });
+    }
+    var q = pick || multi || check;
+    if (q && d.bad && d.bad[q]) { delete d.bad[q]; var box = t.closest(".nu-q"); if (box) { box.classList.remove("nu-bad"); var m = box.querySelector(".nu-err"); if (m) m.remove(); } }
+    saveNutritionDraft();
+    if (pick === "units") renderNutrition(); // switches the height and weight boxes
+  });
+  $("nutritionPane").addEventListener("click", function (e) {
+    if (e.target.closest("[data-nu-send]")) sendNutrition();
+  });
   $("profileNudge").addEventListener("click", function (e) {
     if (!e.target.closest("[data-goto-profile]")) return;
     state.view = "profile";
@@ -3132,6 +3444,7 @@
     }
     return {
       renewal: { id: "demo-r", start: "25 January 2027", replyBy: "10 January 2027", time: "", price: "$540", payment: "Fortnightly via Acuity", seen: false },
+      nutrition: { id: "demo-n", done: false },
       agreement: { id: "demo", type: "Online", start: "2 November 2026", time: "", price: "$540", payment: "Fortnightly via Acuity", under18: false, signed: false },
       client: { name: "Demo Athlete", type: "Online only", sessions: "Train on your own schedule, 3 sessions a week", message: "Welcome to ScoutCo! This is a sample program so you can see how the app works." },
       program: {

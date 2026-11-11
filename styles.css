@@ -573,3 +573,22 @@ button.comm-avatar { cursor: pointer; }
 .class-list li.class-break span { font-weight: 700; letter-spacing: .06em; color: #fca5a5; }
 .class-workout.class-break, .class-list li.class-break { border-style: dashed; }
 .sent-comment .comment-label { margin-bottom: 4px; }
+
+/* Nutrition questionnaire */
+.nu-section h3 { margin-bottom: 4px; }
+.nu-q .ci-label { margin-bottom: 4px; }
+.nu-hint { margin: 0 0 8px; color: var(--muted); font-size: 14px; }
+.nu-req { color: var(--accent-strong); }
+.nu-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.nu-opt {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); cursor: pointer; font-size: 15px; user-select: none;
+}
+.nu-opt input { accent-color: var(--accent); margin: 0; }
+.nu-opt:has(input:checked) { border-color: var(--accent); background: rgba(139, 92, 246, .16); }
+.nu-pair { display: flex; align-items: center; gap: 8px; }
+.nu-pair .ci-input { max-width: 140px; }
+.nu-pair span { color: var(--muted); }
+.nu-bad .ci-input, .nu-bad .nu-opt { border-color: var(--danger); }
+.nu-err { margin-top: 6px; font-size: 14px; }
+.nu-help { margin: 16px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; color: var(--muted); }
