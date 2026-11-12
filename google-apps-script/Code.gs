@@ -32,6 +32,8 @@
  *               (ScoutCo → Set up nutrition questionnaire). Their answers, a heads up and the calorie and macro numbers fill in
  *   Settings: Setting | Value (e.g. "Check-in call booking link" for the Book a check-in call button)
  *   Weeks left: built by the script each time the sheet opens (how long each client's program lasts)
+ *   Master calendar: built by the script each time the sheet opens. Every client week by week: block and week for
+ *               clients on a program, session numbers and current block dates for Lift Club members
  *
  * Monday summary email: ScoutCo menu → "Turn on Monday email" (see sendWeeklySummary below).
  *   Programs: Program | Block | Week | Day | Order | Exercise | Sets | Reps | Load | Tempo | Rest | Notes | Video
@@ -689,6 +691,7 @@ function onOpen() {
     .addItem("Set up tabs", "setupSheets")
     .addItem("Add a new client", "addClient")
     .addItem("Update weeks left", "updateWeeksLeft")
+    .addItem("Update master calendar", "updateMasterCalendar")
     .addItem("Set up online clients", "setupOnline")
     .addItem("Set up to-do list", "setupTodo")
     .addItem("Set up home swaps", "setupHomeSwaps")
@@ -714,6 +717,7 @@ function onOpen() {
   // Reaction | Reacted on | Reacted to columns on Clients, so you can see who has seen their message.
   try { reactionCols_(SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CLIENTS_TAB), true); } catch (err) { /* not essential */ }
   try { updateWeeksLeft(true); } catch (err) { /* the menu item still works */ }
+  try { updateMasterCalendar(true); } catch (err) { /* the menu item still works */ }
   // New exercises on Programs get a suggested home swap (only once the Home swaps tab is set up).
   try { var ss = SpreadsheetApp.getActiveSpreadsheet(); if (ss.getSheetByName(SWAPS_TAB)) syncHomeSwaps_(ss); } catch (err) { /* not essential */ }
   // New clients get a row on Profiles, and names and types stay in step with the Clients tab.
@@ -782,9 +786,62 @@ function updateWeeksLeft(quiet) {
 function weeksLeftRows_(ss) {
   var tz = ss.getSpreadsheetTimeZone();
   var DAY = 24 * 60 * 60 * 1000;
-  var dayNo = function (d) { return Math.round(Date.parse(Utilities.formatDate(d, tz, "yyyy-MM-dd") + "T00:00:00Z") / DAY); };
   var fromDayNo = function (n) { var d = new Date(n * DAY); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
-  var today = dayNo(new Date());
+  var today = dayNo_(new Date(), tz);
+
+  var rows = [];
+  clientPlans_(ss).forEach(function (p) {
+    var name = p.name, code = p.code;
+    var opened = String(p.client["Last opened"] || "").trim() || "Not yet";
+    if (p.error) { rows.push({ code: code, name: name, left: -2, cells: [name, "", "", "", "", p.error, opened] }); return; }
+    var blocks = p.blocks;
+
+    var lastEnd = Math.max.apply(null, blocks.map(function (b) { return b.end; }));
+    var current = null;
+    blocks.forEach(function (b) { if (today >= b.start && today < b.end) current = b; });
+    var firstStart = Math.min.apply(null, blocks.map(function (b) { return b.start; }));
+
+    var nowText = "", weekText = "";
+    if (current) {
+      nowText = current.name || "Program";
+      weekText = "Week " + (Math.floor((today - current.start) / 7) + 1) + " of " + current.weeks;
+    } else if (today < firstStart) {
+      nowText = "Starts " + Utilities.formatDate(fromDayNo(firstStart), tz, "d MMM");
+    } else if (today >= lastEnd) {
+      nowText = "Finished";
+    } else {
+      nowText = "Between blocks";
+    }
+
+    var left = Math.max(0, Math.ceil((lastEnd - Math.max(today, firstStart)) / 7));
+    var status = left === 0 ? "Program has run out" : left <= 2 ? "Write next block now" : "";
+    var notes = [status];
+    if (p.undated.length) notes.push("No start date for " + p.undated.join(", ") + " (worked out from the blocks around it)");
+    rows.push({ code: code, name: name, left: left, now: nowText, week: weekText, lastDay: fromDayNo(lastEnd - 1),
+      notStarted: today < firstStart, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". "), opened] });
+  });
+
+  rows.sort(function (a, b) { return a.left - b.left; });
+  // Put "no program yet" rows last.
+  rows = rows.filter(function (r) { return r.left >= 0; }).concat(rows.filter(function (r) { return r.left < 0; }));
+
+  return rows;
+}
+
+/** A date as a whole day number (days since 1 Jan 1970) in the sheet's time zone, so weeks line up whatever the clock says. */
+function dayNo_(d, tz) {
+  return Math.round(Date.parse(Utilities.formatDate(d, tz, "yyyy-MM-dd") + "T00:00:00Z") / (24 * 60 * 60 * 1000));
+}
+
+/**
+ * Every active client with a written program (not class members; your Coach schedule is included),
+ * with their blocks laid out on the calendar from the Blocks tab start dates.
+ * Each: { client, code, name, type, error, undated, blocks: [{ name, start, end, weeks, weekNames }] }.
+ * start and end are day numbers (end is the day after the block finishes). error explains
+ * why the dates can't be worked out yet, and then blocks is empty.
+ */
+function clientPlans_(ss) {
+  var tz = ss.getSpreadsheetTimeZone();
 
   // Weeks written per program and block, in the order they appear on the Programs tab.
   var programs = {};
@@ -812,80 +869,316 @@ function weeksLeftRows_(ss) {
         if (!p) return;
         (blockNames[p] = blockNames[p] || []).push(String(r[cB]).trim());
         var d = toDate_(r[cS]);
-        if (d) starts[p + "|" + b] = dayNo(d);
+        if (d) starts[p + "|" + b] = dayNo_(d, tz);
         else if (String(r[cS]).trim() !== "") badDates[p + "|" + b] = String(r[cS]).trim();
       });
     }
   }
 
-  var rows = [];
+  var out = [];
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
     if (isOff_(c.Active) || String(c.Code).trim() === "") return;
     if (isClass_(c.Type)) return; // group class members have no written program
-    var name = String(c.Name || "").trim();
-    var code = normalise_(c.Code);
-    var opened = String(c["Last opened"] || "").trim() || "Not yet";
+    var plan = { client: c, code: normalise_(c.Code), name: String(c.Name || "").trim(), type: String(c.Type || "").trim(),
+      error: "", undated: [], blocks: [] };
+    out.push(plan);
     var progName = String(c.Program || c.Name || "").trim();
     var key = progName.toLowerCase();
     var prog = programs[key];
-    if (!prog) { rows.push({ code: code, name: name, left: -2, cells: [name, "", "", "", "", "No exercises on the Programs tab for \"" + progName + "\" yet", opened] }); return; }
+    if (!prog) { plan.error = "No exercises on the Programs tab for \"" + progName + "\" yet"; return; }
 
     // Lay the blocks out on the calendar. A block with no start date follows on from the one
     // before it (or, if it comes first, finishes the day before the next dated block starts).
     var list = prog.order.map(function (b) {
-      return { name: b, weeks: Object.keys(prog.weeks[b]).length, start: starts[key + "|" + b.toLowerCase()] };
+      var weekNames = Object.keys(prog.weeks[b]);
+      return { name: b, weeks: weekNames.length, weekNames: weekNames, start: starts[key + "|" + b.toLowerCase()] };
     });
-    var undated = list.filter(function (b) { return b.start == null; }).map(function (b) { return b.name || "(no block name)"; });
+    plan.undated = list.filter(function (b) { return b.start == null; }).map(function (b) { return b.name || "(no block name)"; });
     for (var i = 1; i < list.length; i++) {
       if (list[i].start == null && list[i - 1].start != null) list[i].start = list[i - 1].start + list[i - 1].weeks * 7;
     }
     for (var j = list.length - 2; j >= 0; j--) {
       if (list[j].start == null && list[j + 1].start != null) list[j].start = list[j + 1].start - list[j].weeks * 7;
     }
-    var blocks = list.filter(function (b) { return b.start != null; });
-    blocks.forEach(function (b) { b.end = b.start + b.weeks * 7; });
+    plan.blocks = list.filter(function (b) { return b.start != null; });
+    plan.blocks.forEach(function (b) { b.end = b.start + b.weeks * 7; });
 
-    if (!blocks.length) {
-      var why;
+    if (!plan.blocks.length) {
       var bad = prog.order.filter(function (b) { return badDates[key + "|" + b.toLowerCase()]; });
-      if (!hasBlockHeaders) why = "The Blocks tab needs the headings Program, Block, Start date in row 1";
-      else if (bad.length) why = "The start date for " + bad[0] + " (\"" + badDates[key + "|" + bad[0].toLowerCase()] + "\") isn't being read as a date. Retype it like 19/10/2026";
-      else if (blockNames[key]) why = "Block names don't match. Programs tab has: " + prog.order.join(", ") + ". Blocks tab has: " + blockNames[key].join(", ");
-      else why = "No rows on the Blocks tab with \"" + progName + "\" in the Program column (it must match the Programs tab exactly)";
-      rows.push({ code: code, name: name, left: -2, cells: [name, "", "", "", "", why, opened] });
+      if (!hasBlockHeaders) plan.error = "The Blocks tab needs the headings Program, Block, Start date in row 1";
+      else if (bad.length) plan.error = "The start date for " + bad[0] + " (\"" + badDates[key + "|" + bad[0].toLowerCase()] + "\") isn't being read as a date. Retype it like 19/10/2026";
+      else if (blockNames[key]) plan.error = "Block names don't match. Programs tab has: " + prog.order.join(", ") + ". Blocks tab has: " + blockNames[key].join(", ");
+      else plan.error = "No rows on the Blocks tab with \"" + progName + "\" in the Program column (it must match the Programs tab exactly)";
+    }
+  });
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Master calendar: everyone on one tab, week by week.                  */
+/* ------------------------------------------------------------------ */
+
+var MASTER_TAB = "Master calendar";
+var MASTER_WEEKS_BACK = 4;      // weeks shown before this week
+var MASTER_WEEKS_AHEAD_MIN = 12; // always show at least this many weeks ahead
+var MASTER_WEEKS_AHEAD_MAX = 30; // and never more than this
+var CLASS_BLOCK_SESSIONS = 12;   // group classes run in blocks of 12 sessions
+// One colour per block, so you can see where each block starts and stops.
+var MASTER_BLOCK_COLOURS = ["#dcfce7", "#dbeafe", "#fef3c7", "#fce7f3", "#ede9fe", "#cffafe"];
+var MASTER_GREEN = "#5E9E34";
+
+/**
+ * A class's sessions from the Class workouts tab, split into blocks of 12 sessions
+ * ("NO CLASS THIS WEEK" rows don't count towards the 12, but are kept as breaks).
+ * Each block: { number, start, end (day numbers, end = last class date), sessions: [day numbers], breaks: [day numbers] }.
+ */
+function classBlocks_(ss, className) {
+  var tz = ss.getSpreadsheetTimeZone(), blocks = [], cur = null, pendingBreaks = [];
+  classWorkouts_(ss, className).forEach(function (w) {
+    var day = dayNo_(toDate_(w.start), tz);
+    if (w.noClass) { pendingBreaks.push(day); return; }
+    if (!cur || cur.sessions.length >= CLASS_BLOCK_SESSIONS) {
+      cur = { number: blocks.length + 1, sessions: [], breaks: [] };
+      blocks.push(cur);
+      pendingBreaks = []; // a break before a block's first class belongs to the gap between blocks
+    }
+    cur.breaks = cur.breaks.concat(pendingBreaks);
+    pendingBreaks = [];
+    if (cur.sessions.indexOf(day) < 0) cur.sessions.push(day);
+  });
+  blocks.forEach(function (b) { b.start = b.sessions[0]; b.end = b.sessions[b.sessions.length - 1]; });
+  return blocks;
+}
+
+/** The block that's on now, else the next one coming up, else the last one that finished. */
+function currentClassBlock_(blocks, today) {
+  var now = blocks.filter(function (b) { return today >= b.start && today <= b.end + 6; })[0];
+  return now || blocks.filter(function (b) { return b.start > today; })[0] || blocks[blocks.length - 1] || null;
+}
+
+/** "Block 2" → "B2". Anything else keeps its first few letters. */
+function blockShort_(name, i) {
+  var m = String(name || "").match(/(\d+)/);
+  if (/^\s*block/i.test(name) && m) return "B" + m[1];
+  if (!String(name || "").trim()) return "B" + (i + 1);
+  return String(name).trim().slice(0, 8);
+}
+
+/** "Week 4 — Deload" → "W4". Falls back to the week's place in the block. */
+function weekShort_(name, i) {
+  var m = String(name || "").match(/week\s*(\d+)/i);
+  return "W" + (m ? m[1] : i + 1);
+}
+
+/**
+ * Rebuilds the "Master calendar" tab: one row per client and one column per week (Monday).
+ * Top section: clients on a program, each week showing their block and week (B2 W3).
+ * Bottom section: Lift Club and Jr Lift Club members, each week showing the session number,
+ * with the current block's dates. Built from Clients, Programs, Blocks and Class workouts.
+ */
+function updateMasterCalendar(quiet) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tz = ss.getSpreadsheetTimeZone();
+  var DAY = 24 * 60 * 60 * 1000;
+  var fromDayNo = function (n) { var d = new Date(n * DAY); return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); };
+  var fmt = function (n, f) { return Utilities.formatDate(fromDayNo(n), tz, f); };
+  var today = dayNo_(new Date(), tz);
+  var thisMonday = today - ((fromDayNo(today).getDay() + 6) % 7);
+
+  // ---- Gather the clients on a program ----
+  // Your own Coach schedule isn't a client, so it stays off the calendar.
+  var plans = clientPlans_(ss).filter(function (p) { return !isCoach_(p.type); }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+
+  // ---- Gather the class members, grouped by class ----
+  var classes = [], byClass = {};
+  CLASS_NAMES.forEach(function (n) { byClass[classKey_(n)] = { name: n, members: [] }; classes.push(byClass[classKey_(n)]); });
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    if (isOff_(c.Active) || String(c.Code).trim() === "" || !isClass_(c.Type)) return;
+    var n = className_(c), k = classKey_(n);
+    if (!byClass[k]) { byClass[k] = { name: n, members: [] }; classes.push(byClass[k]); }
+    byClass[k].members.push(String(c.Name || "").trim());
+  });
+  classes.forEach(function (cl) {
+    cl.members.sort(function (a, b) { return a.localeCompare(b); });
+    cl.blocks = safely_(function () { return classBlocks_(ss, cl.name); }, []);
+    cl.current = currentClassBlock_(cl.blocks, today);
+  });
+  classes = classes.filter(function (cl) { return cl.members.length || cl.blocks.length; });
+
+  // ---- Which weeks to show: a few weeks back, then on until everything written has finished ----
+  var lastDay = today;
+  plans.forEach(function (p) { p.blocks.forEach(function (b) { lastDay = Math.max(lastDay, b.end - 1); }); });
+  classes.forEach(function (cl) { cl.blocks.forEach(function (b) { lastDay = Math.max(lastDay, b.end); }); });
+  var ahead = Math.ceil((lastDay - thisMonday + 1) / 7) + 1;
+  ahead = Math.min(MASTER_WEEKS_AHEAD_MAX, Math.max(MASTER_WEEKS_AHEAD_MIN, ahead));
+  var mondays = [];
+  for (var w = -MASTER_WEEKS_BACK; w < ahead; w++) mondays.push(thisMonday + w * 7);
+  var nowCol = MASTER_WEEKS_BACK; // index of this week in mondays
+  var FIXED = 4, width = FIXED + mondays.length;
+
+  var values = [], bgs = [], fonts = [], weights = [], styles = [], bands = [];
+  var blankRow = function (bg) {
+    values.push(new Array(width).fill(""));
+    bgs.push(new Array(width).fill(bg || null));
+    fonts.push(new Array(width).fill("#111111"));
+    weights.push(new Array(width).fill("normal"));
+    styles.push(new Array(width).fill("normal"));
+    return values.length - 1;
+  };
+  var band = function (labels) {
+    var r = blankRow(MASTER_GREEN);
+    labels.forEach(function (l, i) { values[r][i] = l; });
+    for (var i = 0; i < width; i++) { fonts[r][i] = "#ffffff"; weights[r][i] = "bold"; }
+    for (var j = 0; j < mondays.length; j++) values[r][FIXED + j] = fmt(mondays[j], "d MMM");
+    bands.push(r);
+    return r;
+  };
+
+  // Row 1: title. Row 2: the week starting dates (stays at the top when you scroll).
+  var r0 = blankRow();
+  values[r0][0] = "ScoutCo master calendar";
+  values[r0][2] = "Updated " + Utilities.formatDate(new Date(), tz, "EEE d MMM, h:mm a") + ". Rebuilds each time the sheet opens, or ScoutCo → Update master calendar.";
+  fonts[r0][2] = "#6b7280"; styles[r0][2] = "italic";
+  weights[r0][0] = "bold";
+  var r1 = blankRow("#111111");
+  values[r1][0] = "Week starting (Monday)";
+  for (var k = 0; k < width; k++) { fonts[r1][k] = "#ffffff"; weights[r1][k] = "bold"; }
+  mondays.forEach(function (m, j) { values[r1][FIXED + j] = fmt(m, "EEE d MMM"); });
+  bgs[r1][FIXED + nowCol] = MASTER_GREEN;
+  values[r1][FIXED + nowCol] = "THIS WEEK " + fmt(mondays[nowCol], "d MMM");
+
+  // ---- Section 1: clients on a program ----
+  blankRow();
+  band(["On a program", "Type", "Now on", "Program ends"]);
+  if (!plans.length) { var e1 = blankRow(); values[e1][0] = "No active clients with a program yet."; styles[e1][0] = "italic"; }
+  plans.forEach(function (p) {
+    var r = blankRow();
+    values[r][0] = p.name;
+    values[r][1] = p.type;
+    weights[r][0] = "bold";
+    if (p.error) {
+      values[r][2] = p.error;
+      fonts[r][2] = "#b91c1c"; styles[r][2] = "italic";
       return;
     }
+    var lastEnd = Math.max.apply(null, p.blocks.map(function (b) { return b.end; }));
+    var firstStart = Math.min.apply(null, p.blocks.map(function (b) { return b.start; }));
+    var cur = p.blocks.filter(function (b) { return today >= b.start && today < b.end; })[0];
+    values[r][2] = cur ? (cur.name || "Program") + " · Week " + (Math.floor((today - cur.start) / 7) + 1) + " of " + cur.weeks
+      : today < firstStart ? "Starts " + fmt(firstStart, "d MMM")
+      : today >= lastEnd ? "Program has run out" : "Between blocks";
+    values[r][3] = fmt(lastEnd - 1, "EEE d MMM yyyy");
+    var weeksLeft = Math.ceil((lastEnd - Math.max(today, firstStart)) / 7);
+    if (weeksLeft <= 0) { bgs[r][2] = "#fecaca"; bgs[r][3] = "#fecaca"; }
+    else if (weeksLeft <= 2) { bgs[r][2] = "#fde68a"; bgs[r][3] = "#fde68a"; }
 
-    var lastEnd = Math.max.apply(null, blocks.map(function (b) { return b.end; }));
-    var current = null;
-    blocks.forEach(function (b) { if (today >= b.start && today < b.end) current = b; });
-    var firstStart = Math.min.apply(null, blocks.map(function (b) { return b.start; }));
-
-    var nowText = "", weekText = "";
-    if (current) {
-      nowText = current.name || "Program";
-      weekText = "Week " + (Math.floor((today - current.start) / 7) + 1) + " of " + current.weeks;
-    } else if (today < firstStart) {
-      nowText = "Starts " + Utilities.formatDate(fromDayNo(firstStart), tz, "d MMM");
-    } else if (today >= lastEnd) {
-      nowText = "Finished";
-    } else {
-      nowText = "Between blocks";
-    }
-
-    var left = Math.max(0, Math.ceil((lastEnd - Math.max(today, firstStart)) / 7));
-    var status = left === 0 ? "Program has run out" : left <= 2 ? "Write next block now" : "";
-    var notes = [status];
-    if (undated.length) notes.push("No start date for " + undated.join(", ") + " (worked out from the blocks around it)");
-    rows.push({ code: code, name: name, left: left, now: nowText, week: weekText, lastDay: fromDayNo(lastEnd - 1),
-      notStarted: today < firstStart, cells: [name, nowText, weekText, left, fromDayNo(lastEnd - 1), notes.filter(String).join(". "), opened] });
+    mondays.forEach(function (m, j) {
+      // Look at the middle of each week, so a block that starts on any weekday lands in the right column.
+      var mid = m + 3;
+      p.blocks.forEach(function (b, bi) {
+        if (mid < b.start || mid >= b.end) return;
+        var wi = Math.floor((mid - b.start) / 7);
+        var c = FIXED + j;
+        values[r][c] = blockShort_(b.name, bi) + " " + weekShort_(b.weekNames[wi], wi);
+        bgs[r][c] = MASTER_BLOCK_COLOURS[bi % MASTER_BLOCK_COLOURS.length];
+        if (/deload/i.test(b.weekNames[wi] || "")) values[r][c] += " ↓";
+        if (b.end === lastEnd && wi === b.weeks - 1) { fonts[r][c] = "#b91c1c"; weights[r][c] = "bold"; }
+      });
+    });
   });
 
-  rows.sort(function (a, b) { return a.left - b.left; });
-  // Put "no program yet" rows last.
-  rows = rows.filter(function (r) { return r.left >= 0; }).concat(rows.filter(function (r) { return r.left < 0; }));
+  // ---- Section 2: Lift Club members ----
+  blankRow();
+  band(["Lift Club members", "Class", "Current block", "Session"]);
+  if (!classes.length) { var e2 = blankRow(); values[e2][0] = "No Lift Club members yet (Clients Type \"Lift Club\" or \"Jr Lift Club\")."; styles[e2][0] = "italic"; }
+  classes.forEach(function (cl) {
+    var cur = cl.current;
+    var blockText = "", sessionText = "";
+    if (!cur) {
+      blockText = "No classes on the Class workouts tab yet";
+    } else {
+      blockText = "Block " + cur.number + ": " + fmt(cur.start, "EEE d MMM") + " to " + fmt(cur.end, "d MMM yyyy");
+      var done = cur.sessions.filter(function (d) { return d <= today; }).length;
+      sessionText = done === 0 ? "Starts " + fmt(cur.start, "d MMM")
+        : done >= cur.sessions.length && today > cur.end ? "Block finished"
+        : "Session " + done + " of " + cur.sessions.length;
+      if (cur.sessions.length < CLASS_BLOCK_SESSIONS) sessionText += " (only " + cur.sessions.length + " written)";
+    }
+    // A heading row for the class, then one row per member.
+    var h = blankRow("#f3f4f6");
+    values[h][0] = cl.name + " (" + plural_(cl.members.length, "member") + ")";
+    values[h][2] = blockText;
+    values[h][3] = sessionText;
+    weights[h][0] = "bold"; weights[h][2] = "bold";
+    if (!cur) { fonts[h][2] = "#b91c1c"; styles[h][2] = "italic"; }
+    if (cur && cur.breaks.length) {
+      var nb = blankRow("#f3f4f6");
+      values[nb][2] = "No class: " + cur.breaks.map(function (d) { return fmt(d, "d MMM"); }).join(", ");
+      fonts[nb][2] = "#6b7280"; styles[nb][2] = "italic";
+    }
+    var rowsFor = cl.members.length ? cl.members : ["(no members yet)"];
+    rowsFor.forEach(function (member) {
+      var r = blankRow();
+      values[r][0] = member;
+      values[r][1] = cl.name;
+      if (cur) { values[r][2] = "Block " + cur.number + " ends " + fmt(cur.end, "d MMM"); values[r][3] = sessionText; }
+      mondays.forEach(function (m, j) {
+        var c = FIXED + j;
+        cl.blocks.forEach(function (b, bi) {
+          b.sessions.forEach(function (d, si) {
+            if (d >= m && d < m + 7) {
+              values[r][c] = (values[r][c] ? values[r][c] + ", " : "") + "S" + (si + 1);
+              bgs[r][c] = MASTER_BLOCK_COLOURS[(b.number - 1) % MASTER_BLOCK_COLOURS.length];
+              if (si === b.sessions.length - 1) { fonts[r][c] = "#b91c1c"; weights[r][c] = "bold"; }
+            }
+          });
+          b.breaks.forEach(function (d) {
+            if (d >= m && d < m + 7 && !values[r][c]) { values[r][c] = "No class"; bgs[r][c] = "#e5e7eb"; fonts[r][c] = "#6b7280"; styles[r][c] = "italic"; }
+          });
+        });
+      });
+    });
+  });
 
-  return rows;
+  // ---- Key ----
+  blankRow();
+  var key1 = blankRow(); values[key1][0] = "How to read it";
+  weights[key1][0] = "bold";
+  [
+    "On a program: B2 W3 = Block 2, Week 3. ↓ = deload week. Each block has its own colour. Red = the last written week, so the next block needs writing.",
+    "Now on and Program ends turn yellow with 2 weeks or less left, and red once the program has run out.",
+    "Lift Club: S5 = session 5 of the block. A block is " + CLASS_BLOCK_SESSIONS + " sessions from the Class workouts tab (NO CLASS THIS WEEK rows don't count). Red = the last session of the block.",
+    "Dates come from the Blocks tab (programs) and the Class workouts tab (classes). Change those, not this tab: this tab is rebuilt from scratch."
+  ].forEach(function (t) { var r = blankRow(); values[r][0] = t; fonts[r][0] = "#4b5563"; });
+
+  // This-week column stands out all the way down.
+  for (var row = 2; row < values.length - 6; row++) {
+    if (bands.indexOf(row) >= 0) continue;
+    weights[row][FIXED + nowCol] = "bold";
+    if (!bgs[row][FIXED + nowCol]) bgs[row][FIXED + nowCol] = "#f0fdf4";
+  }
+
+  // ---- Write it all in one go ----
+  var sheet = ss.getSheetByName(MASTER_TAB) || ss.insertSheet(MASTER_TAB);
+  sheet.clear();
+  sheet.setFrozenRows(0); sheet.setFrozenColumns(0);
+  if (sheet.getMaxColumns() < width) sheet.insertColumnsAfter(sheet.getMaxColumns(), width - sheet.getMaxColumns());
+  var all = sheet.getRange(1, 1, values.length, width);
+  all.setNumberFormat("@");
+  all.setValues(values).setBackgrounds(bgs).setFontColors(fonts).setFontWeights(weights).setFontStyles(styles)
+    .setVerticalAlignment("middle").setFontFamily("Arial").setFontSize(10);
+  sheet.getRange(1, FIXED + 1, values.length, mondays.length).setHorizontalAlignment("center");
+  sheet.getRange(1, 1).setFontSize(14);
+  sheet.getRange(2, FIXED + 1, 1, mondays.length).setWrap(true);
+  sheet.setColumnWidth(1, 170);
+  sheet.setColumnWidth(2, 110);
+  sheet.setColumnWidth(3, 250);
+  sheet.setColumnWidth(4, 150);
+  for (var cw = FIXED + 1; cw <= width; cw++) sheet.setColumnWidth(cw, 74);
+  sheet.setRowHeight(2, 36);
+  sheet.setFrozenRows(2);
+  sheet.setFrozenColumns(1);
+  if (!quiet) ss.setActiveSheet(sheet);
 }
 
 /* ------------------------------------------------------------------ */
