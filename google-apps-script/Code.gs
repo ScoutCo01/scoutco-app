@@ -987,7 +987,10 @@ function updateMasterCalendar(quiet) {
 
   // ---- Gather the clients on a program ----
   // Your own Coach schedule isn't a client, so it stays off the calendar.
-  var plans = clientPlans_(ss).filter(function (p) { return !isCoach_(p.type); }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+  // Anyone with no program yet (or dates that can't be worked out) goes to the bottom.
+  var plans = clientPlans_(ss).filter(function (p) { return !isCoach_(p.type); }).sort(function (a, b) {
+    return (a.error ? 1 : 0) - (b.error ? 1 : 0) || a.name.localeCompare(b.name);
+  });
 
   // ---- Gather the class members, grouped by class ----
   var classes = [], byClass = {};
