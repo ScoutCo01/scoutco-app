@@ -23,6 +23,7 @@
   var KEY_RENEW = "scoutco.renewSeen";
   var KEY_NUTRI_SENT = "scoutco.nutritionSent";
   var KEY_NUTRI_DRAFT = "scoutco.nutritionDraft";
+  var KEY_NUTRI_SEEN = "scoutco.nutritionStrategySeen";
   var KEY_MSG_REACT = "scoutco.msgReact";
   var KEY_CLASS_REACT = "scoutco.classReact"; // class members' reactions not yet back from the sheet: { "<code>|<week key>": { emoji, comment } }
 
@@ -569,7 +570,7 @@
     $("viewTabs").classList.toggle("hidden", views.length < 2);
     $("viewTabs").innerHTML = views.map(function (v) {
       return '<button class="view-tab" role="tab" data-view="' + v[0] + '" aria-selected="' + (v[0] === state.view) + '">' +
-        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) || (v[0] === "agreement" && agreementDue()) || (v[0] === "nutrition" && nutritionDue()) ? '<span class="dot" aria-label="to do"></span>' : "") +
+        esc(v[1]) + ((v[0] === "checkin" && due) || (v[0] === "profile" && profDue) || (v[0] === "community" && commDot) || (v[0] === "videos" && vidDot) || (v[0] === "agreement" && agreementDue()) || (v[0] === "nutrition" && (nutritionDue() || (strategyNew() && state.view !== "nutrition"))) ? '<span class="dot" aria-label="to do"></span>' : "") +
         (v[0] === "todo" && openTodos ? '<span class="count" aria-label="' + openTodos + ' to do">' + openTodos + "</span>" : "") +
         (v[0] === "videos" && toReview ? '<span class="count" aria-label="' + toReview + ' to check">' + toReview + "</span>" : "") + "</button>";
     }).join("");
@@ -2364,9 +2365,23 @@
     return head + label + body + (bad[f.id] ? '<p class="error nu-err">' + esc(bad[f.id]) + "</p>" : "") + "</div>";
   }
 
+  // Kirst pastes a Drive link to their Nutrition Strategy PDF on the Nutrition tab, and it shows as a button here.
+  function strategyLink() { var n = nutrition(); return n && /^https:\/\//i.test(n.link || "") ? n.link : ""; }
+  function strategyNew() { var l = strategyLink(); return !!l && load(KEY_NUTRI_SEEN, "") !== l; }
+  function strategyCard() {
+    var l = strategyLink();
+    if (!l) return "";
+    return '<section class="card"><h2>Your Nutrition Strategy</h2><p>' + esc(COACH) + " has put together your nutrition strategy: your daily guide, " +
+      "meal ideas built around the food you like, a sample week and a shopping list.</p>" +
+      '<p><a class="btn primary" style="display:inline-block;text-decoration:none" href="' + esc(l) + '" target="_blank" rel="noopener">Open your Nutrition Strategy</a></p>' +
+      '<p class="small muted">It opens as a PDF. Questions or changes? Just message ' + esc(COACH) + ".</p></section>";
+  }
+
   function renderNutrition() {
     var n = nutrition(), pane = $("nutritionPane");
     if (!n) { pane.innerHTML = ""; return; }
+    if (strategyNew()) save(KEY_NUTRI_SEEN, strategyLink());
+    if (nutritionDone() && strategyLink()) { pane.innerHTML = strategyCard(); return; }
     if (nutritionDone()) {
       var mine = nutritionLocal(), on = (mine && mine.at) || n.doneOn || 0;
       var pending = load(KEY_OUTBOX, []).some(function (x) { return x.type === "nutrition"; });
@@ -2455,8 +2470,14 @@
 
   // A card on the Program tab until they've sent it.
   function renderNutriNudge() {
-    var el = $("nutriNudge"), due = nutritionDue();
-    el.classList.toggle("hidden", !due);
+    var el = $("nutriNudge"), due = nutritionDue(), fresh = !due && strategyNew();
+    el.classList.toggle("hidden", !due && !fresh);
+    if (fresh) {
+      el.innerHTML = "<div><strong>Your Nutrition Strategy is ready</strong>" +
+        "<div>" + esc(COACH) + " has sent your nutrition plan. Have a read through.</div></div>" +
+        '<button class="btn primary" data-goto-nutrition>Open it</button>';
+      return;
+    }
     if (!due) return;
     el.innerHTML = "<div><strong>Your nutrition questionnaire is ready</strong>" +
       "<div>Tell " + esc(COACH) + " about how you eat, the food you like and your goals. It takes about 10 minutes.</div></div>" +

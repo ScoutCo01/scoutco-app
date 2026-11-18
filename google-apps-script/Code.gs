@@ -3625,7 +3625,7 @@ function setupClasses() {
 var NUTRITION_TAB = "Nutrition";
 // The rest of the columns (one per question) are added after these the first time someone answers.
 var NUTRITION_HEADERS = ["Client", "Send to app", "Status", "Answered on", "Kirst's notes", "Heads up", "Suggested calories",
-  "Maintenance (TDEE)", "BMR", "Protein (g)", "Carbs (g)", "Fat (g)", "Loss per week (kg)", "Weeks to goal", "Calculations", "PDF", "ID"];
+  "Maintenance (TDEE)", "BMR", "Protein (g)", "Carbs (g)", "Fat (g)", "Loss per week (kg)", "Weeks to goal", "Calculations", "PDF", "ID", "Strategy link"];
 var NUTRITION_FOLDER = "ScoutCo nutrition";
 // The 5 standard activity levels (Harris-Benedict multipliers). Kept in step with NUTRITION_ACTIVITY in app.js.
 var NUTRITION_ACTIVITY = [
@@ -3640,6 +3640,13 @@ function setupNutrition() {
     sheet.getRange(1, 1, 1, NUTRITION_HEADERS.length).setValues([NUTRITION_HEADERS]);
     styleHeader_(sheet, NUTRITION_HEADERS.length);
   }
+  // Older Nutrition tabs don't have the Strategy link column yet: add it straight after ID.
+  var nc = nutritionCols_(sheet);
+  if (!nc["Strategy link"] && nc.ID) {
+    sheet.insertColumnAfter(nc.ID);
+    sheet.getRange(1, nc.ID + 1).setValue("Strategy link").setFontWeight("bold");
+    nc = nutritionCols_(sheet);
+  }
   var n = Math.max(sheet.getMaxRows() - 1, 1);
   var clients = ss.getSheetByName(CLIENTS_TAB);
   if (clients) {
@@ -3652,6 +3659,12 @@ function setupNutrition() {
   sheet.getRange(2, 3, n, 2).setBackground("#f3f4f6");
   sheet.getRange(2, 6, n, NUTRITION_HEADERS.length - 5).setBackground("#f3f4f6");
   sheet.getRange(2, 4, n, 1).setNumberFormat("dd/mm/yyyy h:mm am/pm");
+  if (nc["Strategy link"]) {
+    sheet.getRange(2, nc["Strategy link"], n, 1).setBackground("#eef6e8");
+    sheet.getRange(1, nc["Strategy link"]).setNote("Paste a Google Drive link to their Nutrition Strategy PDF here " +
+      "(in Drive: Share → General access → Anyone with the link → Copy link). It shows as a button on their Nutrition tab.");
+    sheet.setColumnWidth(nc["Strategy link"], 240);
+  }
   sheet.getRange(1, 3).setNote("Grey columns fill in by themselves when the client sends their answers.");
   sheet.getRange(1, 15).setNote("How the numbers were worked out. Change their weight, height, activity level or goal in the answer columns, " +
     "then click the row and use ScoutCo → Recalculate nutrition numbers.");
@@ -3665,6 +3678,8 @@ function setupNutrition() {
     "Next time they open the app they'll see \"Your nutrition questionnaire is ready\". It takes them about 10 minutes.\n\n" +
     "When they send it, the grey columns fill in: their answers, a heads up about anything to be careful with, and the calorie and macro numbers. " +
     "You get an email with everything, and a PDF is saved in the \"" + NUTRITION_FOLDER + "\" folder in your Drive.\n\n" +
+    "To send them their Nutrition Strategy PDF: put it in Google Drive, Share it as \"Anyone with the link\", copy the link and paste it " +
+    "in the green Strategy link column on their row. It shows as a button on their Nutrition tab.\n\n" +
     "Want them to do it again later (say, in 12 weeks)? Add a new row for them and tick Send to app.");
 }
 
@@ -3692,7 +3707,9 @@ function nutritionFor_(ss, client) {
     if (!id) { id = Utilities.getUuid().slice(0, 8); sheet.getRange(row, c.ID).setValue(id); }
     if (!status && c.Status) sheet.getRange(row, c.Status).setValue("Waiting for answers");
     var on = c["Answered on"] ? vals[i][c["Answered on"] - 1] : "";
-    return { id: id, done: /^answered/i.test(status), doneOn: on instanceof Date ? on.getTime() : 0 };
+    var link = c["Strategy link"] ? String(vals[i][c["Strategy link"] - 1] || "").trim() : "";
+    return { id: id, done: /^answered/i.test(status), doneOn: on instanceof Date ? on.getTime() : 0,
+      link: /^https:\/\/\S+$/i.test(link) ? link.slice(0, 500) : "" };
   }
   return null;
 }
