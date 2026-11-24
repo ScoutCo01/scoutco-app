@@ -110,6 +110,7 @@ function doGet(e) {
     swaps: swapsFor_(ss, code),
     checkins: isOnline_(client.Type) ? checkinsFor_(ss, code) : [],
     todos: isCoach_(client.Type) ? todosFor_(ss) : undefined,
+    pd: isCoach_(client.Type) ? safely_(function () { return pdFor_(ss); }, undefined) : undefined,
     profile: safely_(function () { return isCoach_(client.Type) ? coachProfile_(ss) : profileFor_(ss, code); }, null),
     pbs: isCoach_(client.Type) ? undefined : safely_(function () { return pbsFor_(ss, code); }, []),
     coach: isCoach_(client.Type) ? undefined : safely_(function () { return coachProfile_(ss); }, null),
@@ -389,7 +390,7 @@ function doPost(e) {
   try {
     var progress = tab_(ss, PROGRESS_TAB, PROGRESS_HEADERS);
     var feedback = tab_(ss, FEEDBACK_TAB, FEEDBACK_HEADERS);
-    var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null, todo = null;
+    var weights = null, wKeys = null, notes = null, nKeys = null, cis = null, cKeys = null, todo = null, pd = null;
     var progSwap = null; // the Home swap column, found the first time it's needed
     var progKeys = progress.getRange(1, 8, Math.max(progress.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
     var fbIds = feedback.getRange(1, 7, Math.max(feedback.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); });
@@ -467,6 +468,17 @@ function doPost(e) {
           }
           saveTodo_(todo, ev);
         }
+      } else if (ev.type === "pd") {
+        if (isCoach_(client.Type)) { // the PD log is Kirst's own; clients can't see or add to it
+          if (!pd) {
+            var pSheet = pdTab_(ss), pCols = pdCols_(pSheet);
+            pd = { sheet: pSheet, cols: pCols, tz: ss.getSpreadsheetTimeZone(),
+              ids: pSheet.getRange(1, pCols.id + 1, Math.max(pSheet.getLastRow(), 1), 1).getValues().map(function (r) { return String(r[0]); }) };
+          }
+          savePd_(pd, ev);
+        }
+      } else if (ev.type === "pdtarget") {
+        if (isCoach_(client.Type)) savePdTarget_(ss, ev);
       } else if (ev.type === "profile") {
         if (!isCoach_(client.Type)) saveProfile_(ss, client, ev);
       } else if (ev.type === "coachprofile") {
@@ -694,6 +706,7 @@ function onOpen() {
     .addItem("Update master calendar", "updateMasterCalendar")
     .addItem("Set up online clients", "setupOnline")
     .addItem("Set up to-do list", "setupTodo")
+    .addItem("Set up PD log", "setupPd")
     .addItem("Set up home swaps", "setupHomeSwaps")
     .addItem("Set up client profiles", "setupProfiles")
     .addItem("Set up Lift Club Community", "setupCommunity")
@@ -2561,6 +2574,7 @@ function handleVideo_(ss, client, v) {
   var me = normalise_(client.Code);
 
   if (v.op === "photo") return { ok: true, file: saveCommunityPhoto_(client, v) };
+  if (v.op === "pdfile") return savePdFile_(ss, client, v);
 
   if (v.op === "start") {
     var size = Math.floor(Number(v.size) || 0);
@@ -4024,4 +4038,200 @@ function nutritionFolder_() {
   var folder = found.hasNext() ? found.next() : DriveApp.createFolder(NUTRITION_FOLDER);
   props.setProperty("nutritionFolder", folder.getId());
   return folder;
+}
+
+/* ------------------------------------------------------------------ */
+/* Professional development (PD) log: Kirst's own CPD record for        */
+/* reaccreditation. Coach only. Lives on the "PD log" tab.              */
+/* ------------------------------------------------------------------ */
+
+var PD_TAB = "PD log";
+var PD_HEADERS = ["Status", "Date", "Activity", "Provider", "Type", "Hours", "CPD points", "Certificate", "Course link", "Notes", "ID"];
+var PD_STATUSES = ["Done", "Planned"];
+var PD_TYPES = ["Course", "Workshop", "Conference", "Webinar", "Online module", "First aid / CPR", "Mentoring", "Reading / research", "Other"];
+var PD_FOLDER = "ScoutCo PD certificates";
+var PD_FILE_MAX = 10 * 1024 * 1024; // biggest certificate the app accepts
+var PD_POINTS_SETTING = "PD points needed";
+var PD_START_SETTING = "PD period start";
+var PD_END_SETTING = "PD period end";
+// Kirst's first wishlist course (added when the tab is first made).
+var PD_FIRST_WISH = ["Planned", "", "Assessing Strength and Power", "La Trobe University", "Course", "", "", "",
+  "https://shortcourses.latrobe.edu.au/assessing-strength-and-power", ""];
+
+/** The PD log tab, made the first time it's needed. */
+function pdTab_(ss) {
+  var sheet = ss.getSheetByName(PD_TAB);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(PD_TAB);
+  sheet.appendRow(PD_HEADERS);
+  styleHeader_(sheet, PD_HEADERS.length);
+  sheet.getRange("A2:A").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(PD_STATUSES, true).setAllowInvalid(false).build());
+  sheet.getRange("B2:B").setNumberFormat("dd/mm/yyyy");
+  sheet.getRange("E2:E").setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(PD_TYPES, true).setAllowInvalid(true).build());
+  sheet.setColumnWidth(3, 300);
+  sheet.setColumnWidth(4, 180);
+  sheet.setColumnWidth(8, 200);
+  sheet.setColumnWidth(9, 200);
+  sheet.setColumnWidth(10, 300);
+  sheet.appendRow(PD_FIRST_WISH.concat([newPdId_()]));
+  return sheet;
+}
+
+function newPdId_() { return "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+/** Where each PD log column is (0-based), found by its heading. Missing headings are added on the right. */
+function pdCols_(sheet) {
+  var width = Math.max(sheet.getLastColumn(), 1);
+  var h = sheet.getRange(1, 1, 1, width).getDisplayValues()[0].map(function (x) { return String(x).trim().toLowerCase(); });
+  var cols = {};
+  [["status", "Status"], ["date", "Date"], ["name", "Activity"], ["provider", "Provider"], ["kind", "Type"], ["hours", "Hours"],
+    ["points", "CPD points"], ["cert", "Certificate"], ["link", "Course link"], ["notes", "Notes"], ["id", "ID"]].forEach(function (c) {
+    var at = h.indexOf(c[1].toLowerCase());
+    if (at < 0) {
+      at = h.length;
+      h.push(c[1].toLowerCase());
+      sheet.getRange(1, at + 1).setValue(c[1]).setFontWeight("bold").setBackground("#ede9fe");
+    }
+    cols[c[0]] = at;
+  });
+  cols.width = h.length;
+  return cols;
+}
+
+function pdNum_(v) {
+  var n = parseFloat(String(v == null ? "" : v).replace(",", "."));
+  return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : "";
+}
+function pdDay_(v, tz) {
+  var d = toDate_(v);
+  return d ? Utilities.formatDate(d, tz, "yyyy-MM-dd") : "";
+}
+function pdIsPlanned_(v) { return /^(planned|plan|wishlist|wish|to do|todo)$/i.test(text_(v)); }
+
+/** Everything on the PD log tab, plus the reaccreditation target from the Settings tab. */
+function pdFor_(ss) {
+  var tz = ss.getSpreadsheetTimeZone();
+  var target = { points: pdNum_(setting_(ss, PD_POINTS_SETTING)), start: pdDay_(setting_(ss, PD_START_SETTING), tz), end: pdDay_(setting_(ss, PD_END_SETTING), tz) };
+  var sheet = ss.getSheetByName(PD_TAB);
+  if (!sheet || sheet.getLastRow() < 2) return { items: [], target: target };
+  var lock = LockService.getScriptLock();
+  var locked = lock.tryLock(10000);
+  try {
+    var c = pdCols_(sheet);
+    var values = sheet.getRange(2, 1, sheet.getLastRow() - 1, c.width).getValues();
+    var items = [];
+    values.forEach(function (r, i) {
+      var name = text_(r[c.name]);
+      if (!name) return;
+      var id = text_(r[c.id]);
+      if (!id) {
+        if (!locked) return; // gets an ID next time
+        id = newPdId_();
+        sheet.getRange(i + 2, c.id + 1).setValue(id);
+      }
+      items.push({ id: id, status: pdIsPlanned_(r[c.status]) ? "Planned" : "Done", date: pdDay_(r[c.date], tz), name: name,
+        provider: text_(r[c.provider]), kind: text_(r[c.kind]), hours: pdNum_(r[c.hours]), points: pdNum_(r[c.points]),
+        cert: text_(r[c.cert]), link: text_(r[c.link]), notes: text_(r[c.notes]) });
+    });
+    if (locked) SpreadsheetApp.flush();
+    return { items: items, target: target };
+  } finally {
+    if (locked) lock.releaseLock();
+  }
+}
+
+/** Only web links go in the Certificate and Course link columns. */
+function pdUrl_(v) { v = clip_(v, 500).trim(); return /^https?:\/\/\S+$/i.test(v) ? v : ""; }
+
+/** Saves one change from the app: a new activity or wishlist course, an edit, or a delete. */
+function savePd_(pd, ev) {
+  var id = String(ev.key || "");
+  if (!/^[a-z0-9]{4,40}$/i.test(id)) return;
+  var sheet = pd.sheet, c = pd.cols;
+  var at = pd.ids.indexOf(id); // index into the sheet's rows (0 = row 1)
+  if (ev.del) {
+    if (at > 0) {
+      if (sheet.getMaxRows() > 2) sheet.deleteRow(at + 1); else sheet.getRange(at + 1, 1, 1, c.width).clearContent();
+      pd.ids.splice(at, 1);
+    }
+    return;
+  }
+  var name = clip_(ev.name, 300).trim();
+  if (!name) return;
+  var tz = pd.tz;
+  var date = /^\d{4}-\d{2}-\d{2}$/.test(String(ev.date || "")) ? Utilities.parseDate(ev.date, tz, "yyyy-MM-dd") : "";
+  var row;
+  if (at > 0) row = sheet.getRange(at + 1, 1, 1, c.width).getValues()[0];
+  else { row = []; for (var i = 0; i < c.width; i++) row.push(""); }
+  row[c.status] = ev.status === "Planned" ? "Planned" : "Done";
+  row[c.date] = date;
+  row[c.name] = cell_(name);
+  row[c.provider] = cell_(clip_(ev.provider, 200).trim());
+  row[c.kind] = cell_(clip_(ev.kind, 60).trim());
+  row[c.hours] = pdNum_(ev.hours);
+  row[c.points] = pdNum_(ev.points);
+  row[c.cert] = pdUrl_(ev.cert);
+  row[c.link] = pdUrl_(ev.link);
+  row[c.notes] = cell_(clip_(ev.notes, 2000).trim());
+  row[c.id] = id;
+  if (at > 0) {
+    sheet.getRange(at + 1, 1, 1, c.width).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+    pd.ids.push(id);
+  }
+}
+
+/** Saves the reaccreditation target (points needed, period start and end) on the Settings tab. */
+function savePdTarget_(ss, ev) {
+  var sheet = setupSettingsTab_(ss);
+  var tz = ss.getSpreadsheetTimeZone();
+  var day = function (v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? Utilities.parseDate(v, tz, "yyyy-MM-dd") : ""; };
+  var want = [[PD_POINTS_SETTING, pdNum_(ev.points)], [PD_START_SETTING, day(ev.start)], [PD_END_SETTING, day(ev.end)]];
+  var names = sheet.getRange(1, 1, Math.max(sheet.getLastRow(), 1), 1).getDisplayValues().map(function (r) { return String(r[0]).trim().toLowerCase(); });
+  want.forEach(function (w) {
+    var at = names.indexOf(w[0].toLowerCase());
+    if (at < 0) { sheet.appendRow([w[0], ""]); names.push(w[0].toLowerCase()); at = names.length - 1; }
+    var cell = sheet.getRange(at + 1, 2);
+    cell.setValue(w[1]);
+    if (w[1] instanceof Date) cell.setNumberFormat("dd/mm/yyyy");
+  });
+}
+
+function pdFolder_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty("pdFolder");
+  if (id) {
+    try { var f = DriveApp.getFolderById(id); if (!f.isTrashed()) return f; } catch (err) { /* deleted: make a new one */ }
+  }
+  var found = DriveApp.getFoldersByName(PD_FOLDER);
+  var folder = found.hasNext() ? found.next() : DriveApp.createFolder(PD_FOLDER);
+  props.setProperty("pdFolder", folder.getId());
+  return folder;
+}
+
+/** Saves a certificate (photo or PDF) to the "ScoutCo PD certificates" folder in Kirst's Drive. Private: only she can open it. */
+function savePdFile_(ss, client, v) {
+  if (!isCoach_(client.Type)) return { error: "Only Kirst can do that." };
+  var mime = /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/.test(String(v.mime || "")) ? String(v.mime) : "";
+  if (!mime) return { error: "Certificates need to be a photo or a PDF." };
+  var bytes = Utilities.base64Decode(String(v.data || ""));
+  if (!bytes.length) return { error: "That file looks empty." };
+  if (bytes.length > PD_FILE_MAX) return { error: "That file is too big. Keep it under 10 MB." };
+  var stamp = Utilities.formatDate(new Date(), ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+  var base = clip_(String(v.title || "Certificate").replace(/[\\\/:*?"<>|]+/g, " "), 120).trim() || "Certificate";
+  var ext = mime === "application/pdf" ? "pdf" : mime.split("/")[1].replace("jpeg", "jpg");
+  var file = pdFolder_().createFile(Utilities.newBlob(bytes, mime, stamp + " - " + base + "." + ext));
+  return { ok: true, url: file.getUrl() };
+}
+
+/** ScoutCo menu → Set up PD log. */
+function setupPd() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  setupSettingsTab_(ss);
+  ss.setActiveSheet(pdTab_(ss));
+  SpreadsheetApp.getUi().alert("Done! Your PD log is ready.\n\n" +
+    "Log courses, workshops and webinars from the PD log tab in your coach app, or type them straight in here (one per row). " +
+    "Status \"Done\" counts towards your totals. \"Planned\" is your wishlist.\n\n" +
+    "Certificates you add in the app go in a Drive folder called \"" + PD_FOLDER + "\".");
 }

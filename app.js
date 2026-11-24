@@ -14,6 +14,7 @@
   var KEY_CHECKINS = "scoutco.checkins";
   var KEY_CI_POP = "scoutco.checkinPop"; // which check-in pop-ups this phone has shown: { "<code>|<week>|fri": true }
   var KEY_TODOS = "scoutco.todos";
+  var KEY_PD = "scoutco.pd";
   var KEY_PROFILE = "scoutco.profile";
   var KEY_COMMUNITY = "scoutco.community";
   var KEY_PUSH_ASKED = "scoutco.pushAsked";
@@ -32,7 +33,7 @@
   var $ = function (id) { return document.getElementById(id); };
   function freshState() {
     return { code: null, data: null, block: null, week: null, openDays: {}, drafts: {}, weightDrafts: {}, info: {},
-      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, prof: null, profMsg: "",
+      view: "program", ci: null, liftPick: null, todoDraft: "", todoAll: false, pd: { form: null, targetForm: null, msg: "", up: null }, prof: null, profMsg: "",
       commDraft: "", commPhoto: null, commReply: null, commReplyDraft: "", commMsg: "", commErr: "",
       upload: null, playing: null, ag: null, nu: null, vidTo: "", vidLift: "", vidNote: "", vidReplyOpen: null, vidReplyDraft: "", classOpen: null, classDrafts: {} };
   }
@@ -138,6 +139,7 @@
     mergeSwaps(data && data.ticks, data && data.swaps);
     mergeCheckins(data && data.checkins);
     mergeTodos(data && data.todos);
+    mergePd(data && data.pd);
     mergeProfile(data);
     mergeClass();
     if (state.view !== "program" && !viewList().some(function (v) { return v[0] === state.view; })) state.view = "program";
@@ -190,7 +192,7 @@
   }
 
   function signOut(message) {
-    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW); remove(KEY_NUTRI_SENT); remove(KEY_NUTRI_DRAFT); remove(KEY_MSG_REACT);
+    remove(KEY_CODE); remove(KEY_CACHE); remove(KEY_WEEK); remove(KEY_BLOCK); remove(KEY_OUTBOX); remove(KEY_TODOS); remove(KEY_PD); remove(KEY_PROFILE); remove(KEY_COMMUNITY); remove(KEY_VIDEOS_SEEN); remove(KEY_AGREE); remove(KEY_RENEW); remove(KEY_NUTRI_SENT); remove(KEY_NUTRI_DRAFT); remove(KEY_MSG_REACT);
     videoJustSent = []; videoDone = { hide: {}, reply: {} };
     state = freshState();
     $("codeInput").value = "";
@@ -208,7 +210,7 @@
     if (!canSend()) return null;
     ev.id = newId();
     var box = load(KEY_OUTBOX, []).filter(function (x) {
-      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "nutrition" || ev.type === "renewal" || ev.type === "msgreact" || ev.type === "classreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
+      return !((ev.type === "tick" || ev.type === "weight" || ev.type === "note" || ev.type === "checkin" || ev.type === "todo" || ev.type === "pd" || ev.type === "pdtarget" || ev.type === "profile" || ev.type === "coachprofile" || ev.type === "videoreply" || ev.type === "agreement" || ev.type === "nutrition" || ev.type === "renewal" || ev.type === "msgreact" || ev.type === "classreact") && x.type === ev.type && x.key === ev.key); // only the latest value matters
     });
     box.push(ev);
     save(KEY_OUTBOX, box);
@@ -538,9 +540,272 @@
         "</section>" : "");
   }
 
+  // ---------- Kirst's PD log (professional development for reaccreditation) ----------
+  // Coach only. Lives on the PD log tab of the sheet: completed activities ("Done") and a wishlist ("Planned").
+  // Saved on the phone as { code, items: [...], target: { points, start, end } }.
+  var PD_TYPES = ["Course", "Workshop", "Conference", "Webinar", "Online module", "First aid / CPR", "Mentoring", "Reading / research", "Other"];
+  var PD_FIELDS = ["status", "date", "name", "provider", "kind", "hours", "points", "cert", "link", "notes"];
+  function pdStore() { var p = load(KEY_PD, null); return p && p.code === state.code ? p : { items: [], target: {} }; }
+  function savePdStore(p) { save(KEY_PD, { code: state.code, items: p.items, target: p.target || {} }); }
+  function pdNum(v) { var n = parseFloat(String(v == null ? "" : v).replace(",", ".")); return isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : ""; }
+  function applyPd(list, ev) {
+    var i = -1;
+    list.forEach(function (t, n) { if (t.id === ev.key) i = n; });
+    if (ev.del) { if (i >= 0) list.splice(i, 1); return; }
+    var item = { id: ev.key };
+    PD_FIELDS.forEach(function (f) { item[f] = ev[f] == null ? "" : ev[f]; });
+    item.status = ev.status === "Planned" ? "Planned" : "Done";
+    item.hours = pdNum(ev.hours); item.points = pdNum(ev.points);
+    if (i >= 0) list[i] = item; else list.push(item);
+  }
+  // The sheet wins, except for changes made here that haven't reached it yet.
+  function mergePd(server) {
+    if (!server || !Array.isArray(server.items) || !state.code) return; // older script: keep what's on the phone
+    var items = server.items.filter(function (t) { return t && t.id && t.name; }).map(function (t) {
+      var x = { id: String(t.id) };
+      PD_FIELDS.forEach(function (f) { x[f] = t[f] == null ? "" : String(t[f]); });
+      x.status = t.status === "Planned" ? "Planned" : "Done";
+      x.hours = pdNum(t.hours); x.points = pdNum(t.points);
+      return x;
+    });
+    var target = server.target || {};
+    load(KEY_OUTBOX, []).forEach(function (x) {
+      if (x.type === "pd") applyPd(items, x);
+      if (x.type === "pdtarget") target = { points: pdNum(x.points), start: x.start || "", end: x.end || "" };
+    });
+    savePdStore({ items: items, target: target });
+  }
+  function changePd(ev) {
+    ev.type = "pd";
+    var p = pdStore();
+    applyPd(p.items, ev);
+    savePdStore(p);
+    queue(ev);
+    render();
+  }
+  function pdById(id) { return pdStore().items.filter(function (t) { return t.id === id; })[0]; }
+  function pdDate(day, opts) { var d = parseDay(day); return d ? d.toLocaleDateString("en-AU", opts || { day: "numeric", month: "short", year: "numeric" }) : ""; }
+  function pdSum(list, f) { return Math.round(list.reduce(function (a, t) { return a + (+t[f] || 0); }, 0) * 100) / 100; }
+  function pdWord(n, one, many) { return n + " " + (n === 1 ? one : many); }
+
+  function openPdForm(item, status) {
+    var f = { isNew: !item, status: status || (item && item.status) || "Done" };
+    PD_FIELDS.forEach(function (k) { if (k !== "status") f[k] = item && item[k] != null ? String(item[k]) : ""; });
+    f.id = item ? item.id : "";
+    // Ticking off a wishlist course: it becomes a completed activity dated today.
+    if (item && item.status === "Planned" && f.status === "Done") f.date = isoDay(todayDay());
+    if (!item && f.status === "Done") f.date = isoDay(todayDay());
+    if (!f.kind && f.status === "Done") f.kind = "Course";
+    state.pd.form = f; state.pd.msg = ""; state.pd.up = null; state.pd.targetForm = null;
+    render();
+    var el = document.querySelector(".pd-form");
+    if (el) el.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+  function savePdForm() {
+    var f = state.pd.form;
+    if (!f) return;
+    if (!String(f.name || "").trim()) { state.pd.msg = "Add the name of the course or activity."; render(); return; }
+    if (f.status === "Done" && !parseDay(f.date)) { state.pd.msg = "Add the date you finished it."; render(); return; }
+    if (state.pd.up && state.pd.up.busy) { state.pd.msg = "Hang on, your certificate is still uploading."; render(); return; }
+    var ev = { key: f.id || "p" + newId(), status: f.status };
+    PD_FIELDS.forEach(function (k) { if (k !== "status") ev[k] = String(f[k] || "").trim(); });
+    ev.name = ev.name.slice(0, 300); ev.notes = ev.notes.slice(0, 2000);
+    if (!/^https?:\/\//i.test(ev.cert)) ev.cert = "";
+    if (!/^https?:\/\//i.test(ev.link)) ev.link = ev.link && /^[\w-]+(\.[\w-]+)+/.test(ev.link) ? "https://" + ev.link : "";
+    state.pd.form = null; state.pd.up = null;
+    state.pd.msg = f.status === "Done" ? "Logged ✓" : "Added to your wishlist ✓";
+    changePd(ev);
+  }
+  function pickPdCert() {
+    if (!canSend()) { state.pd.msg = "Certificates upload once you open the app with your own code. You can paste a link instead."; render(); return; }
+    var input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*,application/pdf"; input.style.display = "none";
+    input.addEventListener("change", function () {
+      var file = input.files && input.files[0];
+      input.remove();
+      if (!file) return;
+      var form = state.pd.form, up = { busy: true, err: "", name: file.name || "certificate" };
+      state.pd.up = up;
+      var pdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+      var data = pdf
+        ? (file.size > 10 * 1024 * 1024 ? Promise.reject(new Error("big")) : readBase64(file).then(function (b) { return { mime: "application/pdf", data: b }; }))
+        : shrinkForPost(file).then(function (u) { return { mime: "image/jpeg", data: u.slice(u.indexOf(",") + 1) }; });
+      data.then(function (d) {
+        return videoPost({ op: "pdfile", mime: d.mime, data: d.data, title: (form && form.name) || "Certificate" });
+      }).then(function (res) {
+        if (!res || !res.ok || !/^https?:\/\//.test(res.url || "")) throw new Error((res && res.error) || "bad");
+        if (form) form.cert = res.url;
+      }).catch(function (err) {
+        var m = err && err.message;
+        up.err = m === "big" ? "That PDF is too big. Keep it under 10 MB." : m === "bad image" ? "That photo couldn't be opened. Try another one." :
+          m && m !== "bad" && m !== "offline" ? m : "Couldn't upload it. Check your signal and try again.";
+      }).then(function () { up.busy = false; if (state.pd.up === up) render(); });
+      render();
+    });
+    document.body.appendChild(input);
+    input.click();
+  }
+  function savePdTarget() {
+    var t = state.pd.targetForm;
+    if (!t) return;
+    var ev = { type: "pdtarget", key: "target", points: pdNum(t.points), start: parseDay(t.start) ? t.start : "", end: parseDay(t.end) ? t.end : "" };
+    if (ev.start && ev.end && ev.end <= ev.start) { state.pd.msg = "The end date needs to be after the start date."; render(); return; }
+    var p = pdStore();
+    p.target = { points: ev.points, start: ev.start, end: ev.end };
+    savePdStore(p);
+    queue(ev);
+    state.pd.targetForm = null; state.pd.msg = "Target saved ✓";
+    render();
+  }
+
+  function pdFormHtml() {
+    var f = state.pd.form, done = f.status === "Done", up = state.pd.up;
+    var inp = function (id, label, type, ph, extra) {
+      return '<label class="ci-label" for="pd-' + id + '">' + label + "</label>" +
+        '<input id="pd-' + id + '" class="ci-input" data-pd="' + id + '" type="' + type + '" autocomplete="off" placeholder="' + esc(ph || "") + '" value="' + esc(f[id] || "") + '"' + (extra || "") + ">";
+    };
+    var kinds = PD_TYPES.slice();
+    if (f.kind && kinds.indexOf(f.kind) === -1) kinds.unshift(f.kind);
+    var cert = String(f.cert || "");
+    return '<section class="card pd-form">' +
+      "<h3>" + (f.isNew ? (done ? "Log a completed activity" : "Add to your wishlist") : done && f.id && pdById(f.id) && pdById(f.id).status === "Planned" ? "Mark as done" : "Edit") + "</h3>" +
+      inp("name", "Course or activity *", "text", done ? "e.g. Level 1 Weightlifting Coach" : "e.g. Assessing Strength and Power", ' maxlength="300"') +
+      inp("provider", "Provider", "text", "e.g. La Trobe University, ASCA, ESSA", ' maxlength="200"') +
+      '<div class="pd-two">' +
+        "<div>" + inp("date", done ? "Date finished *" : "When (if you know)", "date", "", "") + "</div>" +
+        '<div><label class="ci-label" for="pd-kind">Type</label><select id="pd-kind" class="ci-input" data-pd="kind">' +
+          '<option value="">Choose…</option>' + kinds.map(function (k) { return '<option' + (k === f.kind ? " selected" : "") + ">" + esc(k) + "</option>"; }).join("") +
+        "</select></div>" +
+      "</div>" +
+      '<div class="pd-two">' +
+        "<div>" + inp("hours", done ? "Hours" : "Hours (estimate)", "text", "e.g. 6", ' inputmode="decimal" maxlength="8"') + "</div>" +
+        "<div>" + inp("points", done ? "CPD points" : "CPD points (estimate)", "text", "e.g. 3", ' inputmode="decimal" maxlength="8"') + "</div>" +
+      "</div>" +
+      (done ?
+        '<label class="ci-label">Certificate or evidence</label>' +
+        '<div class="pd-cert">' +
+          (cert ? '<a class="pd-cert-link" href="' + esc(cert) + '" target="_blank" rel="noopener">📄 Certificate saved</a> <button class="link-btn" data-pd-cert-del>Remove</button>' :
+            '<button class="btn small ghost" data-pd-cert-pick' + (up && up.busy ? " disabled" : "") + ">📎 " + (up && up.busy ? "Uploading…" : "Add photo or PDF") + "</button>") +
+        "</div>" +
+        (up && up.err ? '<p class="error small">' + esc(up.err) + "</p>" : "") +
+        (cert ? "" : inp("cert", "…or paste a link to it", "url", "https://", ' maxlength="500" inputmode="url"')) : "") +
+      inp("link", "Course web page", "url", "https://", ' maxlength="500" inputmode="url"') +
+      '<label class="ci-label" for="pd-notes">Notes</label>' +
+      '<textarea id="pd-notes" class="ci-input" data-pd="notes" rows="3" maxlength="2000" placeholder="' + (done ? "What you learned, or anything the accrediting body asks for" : "Cost, dates, why you want to do it") + '">' + esc(f.notes || "") + "</textarea>" +
+      (state.pd.msg ? '<p class="error small">' + esc(state.pd.msg) + "</p>" : "") +
+      '<div class="ci-actions"><button class="btn ghost" data-pd-cancel>Cancel</button>' +
+        '<button class="btn primary" data-pd-save>' + (done ? "Save to my log" : "Save to wishlist") + "</button></div>" +
+      "</section>";
+  }
+  function pdTargetHtml() {
+    var t = state.pd.targetForm;
+    return '<section class="card pd-form">' +
+      "<h3>Your reaccreditation target</h3>" +
+      '<p class="muted small">Check your accrediting body for these (e.g. ESSA, ASCA or AUSactive). Leave them blank if you\'re not sure yet.</p>' +
+      '<label class="ci-label" for="pdt-points">CPD points needed</label>' +
+      '<input id="pdt-points" class="ci-input" data-pdt="points" type="text" inputmode="decimal" maxlength="8" placeholder="e.g. 20" value="' + esc(t.points) + '">' +
+      '<div class="pd-two"><div><label class="ci-label" for="pdt-start">Period starts</label>' +
+        '<input id="pdt-start" class="ci-input" data-pdt="start" type="date" value="' + esc(t.start) + '"></div>' +
+      '<div><label class="ci-label" for="pdt-end">Renewal due</label>' +
+        '<input id="pdt-end" class="ci-input" data-pdt="end" type="date" value="' + esc(t.end) + '"></div></div>' +
+      (state.pd.msg ? '<p class="error small">' + esc(state.pd.msg) + "</p>" : "") +
+      '<div class="ci-actions"><button class="btn ghost" data-pd-cancel>Cancel</button><button class="btn primary" data-pdt-save>Save target</button></div>' +
+      "</section>";
+  }
+
+  function renderPd() {
+    var p = pdStore(), items = p.items, target = p.target || {};
+    var waiting = {};
+    load(KEY_OUTBOX, []).forEach(function (x) { if (x.type === "pd") waiting[x.key] = true; });
+    var done = items.filter(function (t) { return t.status !== "Planned"; })
+      .sort(function (a, b) { return String(b.date || "").localeCompare(String(a.date || "")); });
+    var wish = items.filter(function (t) { return t.status === "Planned"; });
+    var year = String(todayDay().getFullYear());
+    var thisYear = done.filter(function (t) { return String(t.date || "").slice(0, 4) === year; });
+
+    // Reaccreditation progress
+    var head;
+    var hasTarget = target.points && parseDay(target.start) && parseDay(target.end);
+    if (hasTarget) {
+      var inPeriod = done.filter(function (t) { return t.date && t.date >= target.start && t.date <= target.end; });
+      var pts = pdSum(inPeriod, "points"), need = +target.points, pct = Math.min(100, Math.round(pts / need * 100));
+      var daysLeft = Math.round((parseDay(target.end) - todayDay()) / 864e5);
+      head = '<div class="pd-target">' +
+        '<div class="pd-big"><b>' + pts + "</b><span> of " + need + " CPD points</span></div>" +
+        '<div class="pd-bar" role="progressbar" aria-valuemin="0" aria-valuemax="' + need + '" aria-valuenow="' + pts + '"><i style="width:' + pct + '%"></i></div>' +
+        '<p class="small muted">' + (pts >= need ? "Target reached 🎉" : esc(pdWord(Math.round((need - pts) * 100) / 100, "point", "points")) + " to go") +
+        " · " + (daysLeft >= 0 ? "renewal due " + esc(pdDate(target.end)) + " (" + esc(pdWord(daysLeft, "day", "days")) + ")" : "period ended " + esc(pdDate(target.end))) +
+        '<br>Counting activities from ' + esc(pdDate(target.start)) + " · " + esc(pdWord(pdSum(inPeriod, "hours"), "hour", "hours")) +
+        ' · <button class="link-btn" data-pdt-edit>Change</button></p></div>';
+    } else {
+      head = '<p class="muted small">Log each course, workshop or webinar as you finish it, so it\'s all in one place when reaccreditation comes around. ' +
+        '<button class="link-btn" data-pdt-edit>Set your reaccreditation target</button></p>';
+    }
+    var html = '<section class="card pd-summary">' +
+      "<h2>Professional development</h2>" + head +
+      '<div class="stat-row"><div><b>' + pdSum(thisYear, "points") + "</b><span>Points in " + year + "</span></div>" +
+        "<div><b>" + pdSum(thisYear, "hours") + "</b><span>Hours in " + year + "</span></div>" +
+        "<div><b>" + done.length + "</b><span>Logged in total</span></div></div>" +
+      (state.pd.form || state.pd.targetForm ? "" :
+        (state.pd.msg ? '<p class="small pd-ok">' + esc(state.pd.msg) + "</p>" : "") +
+        '<div class="pd-actions"><button class="btn primary" data-pd-new="Done">+ Log a completed activity</button>' +
+        '<button class="btn ghost" data-pd-new="Planned">+ Add to wishlist</button></div>') +
+      "</section>";
+    if (state.pd.form) html += pdFormHtml();
+    else if (state.pd.targetForm) html += pdTargetHtml();
+
+    var saving = function (t) { return waiting[t.id] && canSend() ? ' <small class="muted">Saving…</small>' : ""; };
+    var editBtns = function (t) {
+      return '<button class="link-btn" data-pd-edit="' + esc(t.id) + '">Edit</button>' +
+        '<button class="todo-del" data-pd-del="' + esc(t.id) + '" aria-label="Delete ' + esc(t.name) + '">' +
+          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+    };
+
+    // Wishlist
+    html += '<h3 class="section-title">Wishlist (' + wish.length + ")</h3>";
+    html += wish.length ? '<section class="card"><ul class="pd-list">' + wish.map(function (t) {
+      var bits = [t.provider, t.kind, t.date ? "planned " + pdDate(t.date) : ""].filter(Boolean);
+      return '<li class="pd-item">' +
+        '<div class="pd-main"><strong>' + esc(t.name) + "</strong>" + saving(t) +
+          (bits.length ? '<div class="small muted">' + esc(bits.join(" · ")) + "</div>" : "") +
+          (t.notes ? '<div class="small pd-notes">' + esc(t.notes) + "</div>" : "") +
+          '<div class="pd-links">' + (safeUrl(t.link) ? '<a href="' + esc(safeUrl(t.link)) + '" target="_blank" rel="noopener">Course page ↗</a>' : "") + editBtns(t) + "</div>" +
+        "</div>" +
+        '<button class="btn small primary" data-pd-finish="' + esc(t.id) + '">Mark as done</button>' +
+        "</li>";
+    }).join("") + "</ul></section>" : '<p class="muted small">Courses you\'d like to do. Tap "Add to wishlist" to save one.</p>';
+
+    // Completed, by year
+    html += '<h3 class="section-title">Completed</h3>';
+    if (!done.length) html += '<p class="muted small">Nothing logged yet. Tap "Log a completed activity" when you finish something.</p>';
+    var years = [];
+    done.forEach(function (t) { var y = String(t.date || "").slice(0, 4) || "No date"; if (years.indexOf(y) === -1) years.push(y); });
+    years.forEach(function (y) {
+      var list = done.filter(function (t) { return (String(t.date || "").slice(0, 4) || "No date") === y; });
+      html += '<section class="card"><div class="pd-year"><strong>' + esc(y) + "</strong><span>" +
+        esc(pdWord(pdSum(list, "points"), "point", "points") + " · " + pdWord(pdSum(list, "hours"), "hour", "hours")) + "</span></div>" +
+        '<ul class="pd-list">' + list.map(function (t) {
+          var bits = [t.provider, t.kind].filter(Boolean);
+          var cert = safeUrl(t.cert);
+          return '<li class="pd-item">' +
+            '<div class="pd-date">' + esc(pdDate(t.date, { day: "numeric", month: "short" }) || "–") + "</div>" +
+            '<div class="pd-main"><strong>' + esc(t.name) + "</strong>" + saving(t) +
+              (bits.length ? '<div class="small muted">' + esc(bits.join(" · ")) + "</div>" : "") +
+              '<div class="pd-chips">' + (t.points !== "" ? '<span class="pill">' + esc(pdWord(+t.points, "point", "points")) + "</span>" : "") +
+                (t.hours !== "" ? '<span class="pill">' + esc(t.hours) + " h</span>" : "") + "</div>" +
+              (t.notes ? '<div class="small pd-notes">' + esc(t.notes) + "</div>" : "") +
+              '<div class="pd-links">' + (cert ? '<a href="' + esc(cert) + '" target="_blank" rel="noopener">📄 Certificate ↗</a>' : '<span class="pd-nocert">No certificate yet</span>') +
+                editBtns(t) + "</div>" +
+            "</div></li>";
+        }).join("") + "</ul></section>";
+    });
+    html += '<p class="muted small">Only you can see this tab. Everything also saves to the PD log tab of your sheet, so you can download it for your reaccreditation.</p>';
+    $("pdPane").innerHTML = html;
+  }
+
   function viewList() {
     var v;
-    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"]];
+    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"], ["pd", "PD log"]];
     else if (isClass()) {
       v = [["program", "Workouts"], ["community", "Lift Club Community"], ["profile", "Profile"]];
       if (nutrition()) v.push(["nutrition", "Nutrition"]);
@@ -578,6 +843,7 @@
     $("checkinPane").classList.toggle("hidden", state.view !== "checkin");
     $("progressPane").classList.toggle("hidden", state.view !== "progress");
     $("todoPane").classList.toggle("hidden", state.view !== "todo");
+    $("pdPane").classList.toggle("hidden", state.view !== "pd");
     $("sitePane").classList.toggle("hidden", state.view !== "site");
     $("profilePane").classList.toggle("hidden", state.view !== "profile");
     $("clientsPane").classList.toggle("hidden", state.view !== "clients");
@@ -2672,6 +2938,8 @@
       active.getAttribute("data-prof") != null ? "data-prof" :
       active.getAttribute("data-ag") != null ? "data-ag" :
       active.getAttribute("data-todo-new") != null ? "data-todo-new" :
+      active.getAttribute("data-pd") != null ? "data-pd" :
+      active.getAttribute("data-pdt") != null ? "data-pdt" :
       active.getAttribute("data-comm-new") != null ? "data-comm-new" :
       active.getAttribute("data-comm-reply-text") != null ? "data-comm-reply-text" :
       active.getAttribute("data-vid-reply-text") != null ? "data-vid-reply-text" :
@@ -2726,6 +2994,7 @@
     if (state.view === "checkin") renderCheckin();
     if (state.view === "progress") renderProgress(blocks);
     if (state.view === "todo") renderTodo();
+    if (state.view === "pd" && isCoach()) renderPd();
     if (state.view === "site") renderSite();
     if (state.view === "profile") { renderProfile(); $("profilePane").insertAdjacentHTML("beforeend", pushCardHtml()); }
     if (state.view === "clients") renderClients();
@@ -3148,6 +3417,41 @@
       return;
     }
     if (e.target.closest("[data-todo-all]")) { state.todoAll = !state.todoAll; render(); }
+  });
+
+  $("pdPane").addEventListener("input", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-pd");
+    if (f && state.pd.form) { state.pd.form[f] = e.target.value; return; }
+    var t = e.target.getAttribute && e.target.getAttribute("data-pdt");
+    if (t && state.pd.targetForm) state.pd.targetForm[t] = e.target.value;
+  });
+  $("pdPane").addEventListener("change", function (e) {
+    var f = e.target.getAttribute && e.target.getAttribute("data-pd");
+    if (f && state.pd.form) state.pd.form[f] = e.target.value;
+    var t = e.target.getAttribute && e.target.getAttribute("data-pdt");
+    if (t && state.pd.targetForm) state.pd.targetForm[t] = e.target.value;
+  });
+  $("pdPane").addEventListener("click", function (e) {
+    var b;
+    if ((b = e.target.closest("[data-pd-new]"))) { openPdForm(null, b.getAttribute("data-pd-new")); return; }
+    if ((b = e.target.closest("[data-pd-edit]"))) { var it = pdById(b.getAttribute("data-pd-edit")); if (it) openPdForm(it); return; }
+    if ((b = e.target.closest("[data-pd-finish]"))) { var w = pdById(b.getAttribute("data-pd-finish")); if (w) openPdForm(w, "Done"); return; }
+    if ((b = e.target.closest("[data-pd-del]"))) {
+      var d = pdById(b.getAttribute("data-pd-del"));
+      if (d && window.confirm("Delete \"" + d.name + "\" from your " + (d.status === "Planned" ? "wishlist" : "PD log") + "?")) { state.pd.msg = ""; changePd({ key: d.id, name: d.name, del: true }); }
+      return;
+    }
+    if (e.target.closest("[data-pd-save]")) { savePdForm(); return; }
+    if (e.target.closest("[data-pd-cancel]")) { state.pd.form = null; state.pd.targetForm = null; state.pd.up = null; state.pd.msg = ""; render(); return; }
+    if (e.target.closest("[data-pd-cert-pick]")) { pickPdCert(); return; }
+    if (e.target.closest("[data-pd-cert-del]")) { if (state.pd.form) state.pd.form.cert = ""; render(); return; }
+    if (e.target.closest("[data-pdt-edit]")) {
+      var tg = pdStore().target || {};
+      state.pd.form = null; state.pd.msg = "";
+      state.pd.targetForm = { points: tg.points == null ? "" : String(tg.points), start: tg.start || "", end: tg.end || "" };
+      render(); return;
+    }
+    if (e.target.closest("[data-pdt-save]")) { savePdTarget(); return; }
   });
 
   $("profilePane").addEventListener("input", function (e) {

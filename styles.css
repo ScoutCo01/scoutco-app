@@ -592,3 +592,38 @@ button.comm-avatar { cursor: pointer; }
 .nu-bad .ci-input, .nu-bad .nu-opt { border-color: var(--danger); }
 .nu-err { margin-top: 6px; font-size: 14px; }
 .nu-help { margin: 16px 0 0; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; color: var(--muted); }
+
+/* Kirst's PD log */
+.pd-summary h2 { margin-bottom: 8px; }
+.pd-target { margin: 6px 0 2px; }
+.pd-big b { font-size: 34px; line-height: 1; }
+.pd-big span { color: var(--muted); font-size: 15px; }
+.pd-bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 10px 0 8px; }
+.pd-bar i { display: block; height: 100%; background: var(--done); border-radius: 999px; }
+.pd-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.pd-actions .btn { flex: 1 1 200px; }
+.pd-ok { color: var(--done); margin: 12px 0 0; }
+.pd-form h3 { margin-bottom: 0; }
+.pd-form .error { margin-top: 12px; }
+.pd-two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pd-two > div { min-width: 0; }
+.pd-form input[type="date"] { min-height: 44px; -webkit-appearance: none; appearance: none; }
+.pd-form select.ci-input { min-height: 44px; }
+.pd-cert { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pd-cert-link { font-weight: 600; }
+.pd-list { list-style: none; margin: 0; padding: 0; }
+.pd-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.pd-item:first-child { border-top: 0; padding-top: 4px; }
+.pd-item .btn { flex: 0 0 auto; }
+.pd-date { flex: 0 0 52px; font-size: 13px; font-weight: 700; color: var(--accent-strong); padding-top: 2px; }
+.pd-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pd-main strong { font-size: 16px; }
+.pd-chips { display: flex; gap: 6px; margin-top: 6px; }
+.pd-chips:empty { display: none; }
+.pd-notes { margin-top: 6px; white-space: pre-wrap; color: var(--text); opacity: .85; }
+.pd-links { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 13px; }
+.pd-links .todo-del { margin-left: auto; padding: 4px; }
+.pd-nocert { color: #fbbf24; }
+.pd-year { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.pd-year strong { font-size: 18px; }
+.pd-year span { font-size: 13px; color: var(--muted); }
