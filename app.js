@@ -73,11 +73,11 @@
 
   // ---------- fetching ----------
   function fetchProgram(code) {
-    if (code === "DEMO" || code === "DEMO-CLASS" || !CONFIG.apiUrl) {
-      if (code !== "DEMO" && code !== "DEMO-CLASS") {
+    if (code === "DEMO" || code === "DEMO-CLASS" || code === "DEMO-TEAM" || !CONFIG.apiUrl) {
+      if (code !== "DEMO" && code !== "DEMO-CLASS" && code !== "DEMO-TEAM") {
         return Promise.reject(new Error("The app isn't connected to the program sheet yet. Try the code DEMO."));
       }
-      return Promise.resolve(code === "DEMO-CLASS" ? demoClassData() : demoData());
+      return Promise.resolve(code === "DEMO-CLASS" ? demoClassData() : code === "DEMO-TEAM" ? demoTeamData() : demoData());
     }
     var url = CONFIG.apiUrl + (CONFIG.apiUrl.indexOf("?") === -1 ? "?" : "&") +
       "code=" + encodeURIComponent(code) + "&t=" + Date.now();
@@ -205,7 +205,7 @@
   // Events wait in an outbox until the sheet confirms it saved them, so nothing is lost offline.
   var flushing = false;
   function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
-  function canSend() { return CONFIG.apiUrl && state.code && state.code !== "DEMO" && state.code !== "DEMO-CLASS"; }
+  function canSend() { return CONFIG.apiUrl && state.code && state.code !== "DEMO" && state.code !== "DEMO-CLASS" && state.code !== "DEMO-TEAM" && !isTeam(); }
   function queue(ev) {
     if (!canSend()) return null;
     ev.id = newId();
@@ -409,6 +409,16 @@
   function isClass() {
     var c = (state.data && state.data.client) || {};
     return /lift club|\bclass\b/i.test(String(c.type || "")) && !isCoach();
+  }
+
+  // ---------- team links ----------
+  // A Clients row with Type "Team" is one shared code for a whole team (e.g. a club's preseason).
+  // Everyone on the team uses the same link, so it's read only: they see the program and nothing else.
+  // No ticks, weights, comments, check-ins, profile, videos or Lift Club, and nothing is sent to the sheet,
+  // so one player can never change what another player sees.
+  function isTeam() {
+    var c = (state.data && state.data.client) || {};
+    return /\bteam\b/i.test(String(c.type || "")) && !isCoach();
   }
 
   // ---------- weeks on the calendar (Monday to Sunday) ----------
@@ -805,7 +815,8 @@
 
   function viewList() {
     var v;
-    if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"], ["pd", "PD log"]];
+    if (isTeam()) v = [["program", "Program"]];
+    else if (isCoach()) v = [["program", "Schedule"], ["todo", "To-do"], ["clients", "Clients"], ["videos", "Videos"], ["community", "Lift Club Community"], ["profile", "Profile"], ["pd", "PD log"]];
     else if (isClass()) {
       v = [["program", "Workouts"], ["community", "Lift Club Community"], ["profile", "Profile"]];
       if (nutrition()) v.push(["nutrition", "Nutrition"]);
@@ -1170,6 +1181,7 @@
   function hasProfileData(p) { return profFields().some(function (f) { return String(p[f] || "").trim() !== ""; }); }
   // The Profile tab gets a dot until they've told Kirst the basics.
   function profileNeedsFilling() {
+    if (isTeam()) return false;
     var p = getProfile();
     if (isCoach()) return !p.photo || !String(p.about || "").trim();
     if (isClass()) return !p.dob || !String(p.goals || "").trim();
@@ -2960,7 +2972,7 @@
     var blocks = getBlocks(data);
     var weeks = currentWeeks();
 
-    $("helloName").textContent = client.name ? "Hi " + String(client.name).split(" ")[0] : "Your program";
+    $("helloName").textContent = isTeam() ? (client.name || "Your program") : client.name ? "Hi " + String(client.name).split(" ")[0] : "Your program";
     var myPhoto = safePhoto(getProfile().photo);
     $("helloPhoto").innerHTML = myPhoto ? '<img src="' + esc(myPhoto) + '" alt="">' : "";
     $("helloPhoto").classList.toggle("hidden", !myPhoto);
@@ -3011,7 +3023,7 @@
     if (client.message) {
       var cPhoto = isCoach() ? "" : safePhoto(coachInfo().photo);
       note.innerHTML = (cPhoto ? '<button class="note-photo" data-coach-open aria-label="About ' + esc(COACH) + '"><img src="' + esc(cPhoto) + '" alt=""></button>' : "") + "<strong>From " + esc(COACH) + "</strong>" + esc(client.message) +
-        (isCoach() ? "" : msgReactHtml());
+        (isCoach() || isTeam() ? "" : msgReactHtml());
       note.classList.remove("hidden");
     } else {
       note.classList.add("hidden");
@@ -3049,9 +3061,10 @@
     }).join("");
 
     var week = weeks.filter(function (w) { return w.name === state.week; })[0];
-    var ticks = getTicks();
-    var weights = getWeights();
-    var swaps = isCoach() ? {} : getSwaps();
+    var team = isTeam();
+    var ticks = team ? {} : getTicks();
+    var weights = team ? {} : getWeights();
+    var swaps = isCoach() || team ? {} : getSwaps();
     $("days").innerHTML = !week ? "" : week.days.map(function (day, di) {
       var done = 0;
       var dayKey = scope(week.name, day.name);
@@ -3059,13 +3072,13 @@
       state.info[dayKey] = where;
       var swappable = 0, swapped = 0;
       day.exercises.forEach(function (ex, i) {
-        if (isCoach() || !ex.home || !ex.home.name) return;
+        if (isCoach() || team || !ex.home || !ex.home.name) return;
         swappable++;
         if (swaps[tickKey(week.name, day.name, i)]) swapped++;
       });
       var items = day.exercises.map(function (ex, i) {
         var k = tickKey(week.name, day.name, i);
-        var sw = isCoach() ? null : activeSwap(ex, k, swaps);
+        var sw = isCoach() || team ? null : activeSwap(ex, k, swaps);
         state.info[k] = { block: where.block, week: where.week, session: where.session,
           exercise: (ex.label ? ex.label + " " : "") + ex.name, name: sw ? sw.name : ex.name, swap: sw ? sw.name : "",
           home: isCoach() ? null : ex.home, reps: ex.reps, key: k.slice(state.code.length + 1) };
@@ -3074,21 +3087,21 @@
         return exerciseHtml(ex, k, isDone, weights, sw, swapped > 0);
       }).join("");
       var total = day.exercises.length;
-      var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === firstUnfinished(week, ticks));
+      var open = state.openDays[dayKey] !== undefined ? state.openDays[dayKey] : (di === (team ? todaysDay(week) : firstUnfinished(week, ticks)));
       return '<article class="day' + (open ? " open" : "") + '" data-day="' + esc(dayKey) + '">' +
         '<button class="day-head" aria-expanded="' + open + '">' +
           '<div><div class="day-title">' + esc(day.name) + '</div>' +
           '<div class="day-meta">' + total + (isCoach() ? " client" : " exercise") + (total === 1 ? "" : "s") + "</div></div>" +
           '<div style="display:flex;align-items:center;gap:10px">' +
-            '<span class="day-progress' + (done === total && total ? " complete" : "") + '">' +
-              (done === total && total ? "Done ✓" : done + "/" + total) + "</span>" +
+            (team ? "" : '<span class="day-progress' + (done === total && total ? " complete" : "") + '">' +
+              (done === total && total ? "Done ✓" : done + "/" + total) + "</span>") +
             '<svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
           "</div>" +
         "</button>" +
         '<div class="day-body">' +
           (swappable ? swapAllHtml(dayKey, swapped === swappable) : "") + items +
           (done ? '<div class="day-foot"><button class="btn small ghost" data-clear="' + esc(dayKey) + '">Clear ticks</button></div>' : "") +
-          (isCoach() ? "" : commentHtml(dayKey)) +
+          (isCoach() || team ? "" : commentHtml(dayKey)) +
         "</div>" +
       "</article>";
     }).join("");
@@ -3107,6 +3120,16 @@
         'placeholder="How did it feel? PBs, pain or questions…">' + esc(state.drafts[dayKey] || "") + "</textarea>" +
       '<div class="comment-actions"><button class="btn small primary" data-send="' + esc(dayKey) + '">Send</button></div>' +
     "</div>";
+  }
+
+  // Team links have no ticks, so open the session for today's weekday (a Day named "Tue · Strength 1"
+  // opens on a Tuesday). If none matches, the first session opens.
+  function todaysDay(week) {
+    var names = [["sun"], ["mon"], ["tue"], ["wed"], ["thu"], ["fri"], ["sat"]][new Date().getDay()][0];
+    for (var d = 0; d < week.days.length; d++) {
+      if (String(week.days[d].name).trim().toLowerCase().indexOf(names) === 0) return d;
+    }
+    return 0;
   }
 
   function firstUnfinished(week, ticks) {
@@ -3130,6 +3153,7 @@
 
   // sw: the home version being shown instead (or null). homeDay: something in this session is swapped.
   function exerciseHtml(ex, key, isDone, weights, sw, homeDay) {
+    var team = isTeam();
     var name = sw ? sw.name : ex.name;
     var stats = [
       ["Sets", ex.sets], ["Reps", ex.reps], ["Load", sw ? "" : ex.load], ["Tempo", ex.tempo], ["Rest", ex.rest]
@@ -3141,26 +3165,26 @@
     if (sw) {
       swapLine = '<div class="ex-swap on"><span class="swap-tag">Home swap</span><span class="muted">instead of ' + esc(ex.name) + "</span>" +
         '<button class="link-btn" data-swap="' + esc(key) + '">Back to gym version</button></div>';
-    } else if (ex.home && ex.home.name && !isCoach()) {
+    } else if (ex.home && ex.home.name && !isCoach() && !team) {
       swapLine = '<div class="ex-swap"><button class="swap-btn" data-swap="' + esc(key) + '">⇄ Swap for home</button></div>';
     } else if (ex.locked && homeDay) {
       swapLine = '<div class="ex-swap"><span class="muted small">🔒 Gym only, this one can\'t be swapped</span></div>';
     }
     // The main lifts are taught in person, not from videos.
     var book = safeUrl(CONFIG.techniqueBookingUrl);
-    if (!sw && !isCoach() && liftOf(ex.name)) {
+    if (!sw && !isCoach() && !team && liftOf(ex.name)) {
       swapLine += '<div class="ex-formvid"><button class="swap-btn" data-formvid="' + esc(key) + '">🎥 Send ' + esc(COACH) + " a form video</button>" +
         '<p class="vid-tip">' + esc(TRIM_TIP) + "</p></div>";
     }
-    if (ex.locked && !sw && !isCoach()) {
+    if (ex.locked && !sw && !isCoach() && !team) {
       swapLine += '<div class="ex-technique">Not confident on your form? ' +
         (book ? '<a href="' + esc(book) + '" target="_blank" rel="noopener">Book a session with ' + esc(COACH) + "</a>" : "Book a session with " + esc(COACH)) +
         " to learn the technique.</div>";
     }
-    return '<div class="ex' + (isDone ? " done" : "") + (sw ? " swapped" : "") + '">' +
-      '<button class="check" data-tick="' + esc(key) + '" aria-pressed="' + isDone + '" aria-label="Mark ' + esc(name) + ' done">' +
+    return '<div class="ex' + (isDone ? " done" : "") + (sw ? " swapped" : "") + (team ? " view-only" : "") + '">' +
+      (team ? "" : '<button class="check" data-tick="' + esc(key) + '" aria-pressed="' + isDone + '" aria-label="Mark ' + esc(name) + ' done">' +
         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0b1a14" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>' +
-      "</button>" +
+      "</button>") +
       '<div class="ex-main">' +
         '<div class="ex-name">' + (ex.label ? '<span class="ex-label">' + esc(ex.label) + "</span>" : "") + esc(name) + "</div>" +
         (stats ? '<div class="ex-stats">' + stats + "</div>" : "") +
@@ -3168,7 +3192,7 @@
         (video ? '<a class="ex-video" href="' + esc(video) + '" target="_blank" rel="noopener">' +
           (/youtube\.com\/results/.test(video) ? "▶ Demo videos on YouTube" : "▶ Watch demo") + "</a>" : "") +
         swapLine +
-        weightHtml(ex, key, weights, name) +
+        (team ? "" : weightHtml(ex, key, weights, name)) +
       "</div>" +
     "</div>";
   }
@@ -3808,6 +3832,43 @@
               ]},
               { name: "Session 2 · Upper", exercises: [
                 ex("A1", "Weighted chin-up", "5", "3", "+10 kg", "3 min")
+              ]}
+            ]}
+          ]}
+        ]
+      },
+      updated: new Date().toISOString()
+    };
+  }
+
+  // A shared team link (code DEMO-TEAM): the program only, read only, nothing to tick or send.
+  function demoTeamData() {
+    function ex(label, name, sets, reps, load, rest, notes, video) {
+      return { label: label, name: name, sets: sets, reps: reps, load: load, tempo: "", rest: rest, notes: notes || "", video: video || "" };
+    }
+    var warm = ex("1", "ScoutCo warm-up (10 min)", "", "", "", "", "Get moving, mobilise, switch on, then land and stop. Soft, quiet landings, knees in line with toes.", "");
+    return {
+      client: { name: "Demo Team", type: "Team", sessions: "Preseason: field Mon & Wed, strength Tue & Thu", message: "Welcome to preseason! Your sessions for each week are below." },
+      program: {
+        name: "Demo Team",
+        blocks: [
+          { name: "Preseason", start: isoOffset(-2), weeks: [
+            { name: "Week 1", days: [
+              { name: "Mon · Field: endurance + skills", exercises: [warm,
+                ex("2", "Fox & Hares evasion game", "", "", "", "", "3x3 grid, 1 fox / 4 hares, swap fox every 2 min. ~10 min"),
+                ex("3", "Skills & tactics", "", "", "", "", "30-35 mins, coach-led")
+              ]},
+              { name: "Tue · Strength 1", exercises: [warm,
+                ex("2", "Goblet Squat", "3", "10", "RPE 5", "60-90 sec", "Alternative: box squat to a bench."),
+                ex("3", "DB Bench Press", "3", "10", "RPE 5", "60-90 sec", "Alternative: incline push-up."),
+                ex("4", "Plank Hold", "3", "20 sec", "", "60 sec", "Alternative: from knees.")
+              ]},
+              { name: "Wed · Field: speed + change of direction", exercises: [warm,
+                ex("2", "Intro to speed mechanics", "", "", "", "", "A-march, A-skip progression over 15m."),
+                ex("3", "Skills & tactics", "", "", "", "", "30-40 mins, coach-led")
+              ]},
+              { name: "Sat · Optional run", exercises: [
+                ex("1", "1 min jog / 1 min walk", "", "25 min", "RPE 3-4", "", "On your own or with a teammate.")
               ]}
             ]}
           ]}

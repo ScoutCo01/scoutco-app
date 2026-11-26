@@ -240,6 +240,19 @@ Enquiries go on the same **Enquiries** tab as online ones, marked Face to face i
 
 Both forms also save a PDF of every enquiry in your Drive, in **ScoutCo enquiries > Online** or **ScoutCo enquiries > Face to face** (made on the first one). The PDF is linked in a PDF column on the enquiry's row and attached to your email. Add `?package=weekly` or `?package=fortnightly` to the link to tick that package for them, and `?preview` to try it without saving.
 
+## Team links (one link for a whole team)
+
+For a team program, like a club's preseason, add **one** row on the Clients tab for the whole team and give every player the same link.
+
+- **Type:** `Team`
+- **Name:** the team's name. It shows at the top of the app instead of "Hi …".
+- **Program:** the program's name on the Programs tab (blank = the Name).
+- **Sessions:** optional, e.g. "Field Mon & Wed, strength Tue & Thu".
+
+A team link is read only. Players see the program, the week tabs, the notes and demo videos, Kirst's message and the ScoutCo HQ tab. There are no ticks, weights, comments, check-ins, profile, videos, Lift Club, agreement or nutrition, and nothing a player does is sent to the sheet, so one player can never change what another sees. The team stays out of the Monday email, the Profiles tab, your coach Clients tab and the Home swaps tab. "Last opened" still updates, so you can see the link is being used.
+
+Sessions open on today's weekday when the Day name starts with it (e.g. `Tue · Strength 1` opens on a Tuesday). For drills that shouldn't get a YouTube demo button, type `none` in the **Video** column. Demo code: `DEMO-TEAM`.
+
 ## Group classes (Lift Club, Jr Lift Club)
 
 Class members pay for the class only, so they don't get a program, progress or videos. They get a **Workouts** tab, the Lift Club Community, their Profile, their Agreement and ScoutCo HQ.
