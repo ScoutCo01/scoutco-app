@@ -831,7 +831,7 @@
       if (nutrition()) v.push(["nutrition", "Nutrition"]);
       if (agreement()) v.push(["agreement", "Agreement"]);
     }
-    if (siteLinks().length) v.push(["site", "ScoutCo HQ"]);
+    if (siteLinks().length && !isTeam()) v.push(["site", "ScoutCo HQ"]);
     return v;
   }
   function renderViewTabs() {

@@ -249,7 +249,7 @@ For a team program, like a club's preseason, add **one** row on the Clients tab 
 - **Program:** the program's name on the Programs tab (blank = the Name).
 - **Sessions:** optional, e.g. "Field Mon & Wed, strength Tue & Thu".
 
-A team link is read only. Players see the program, the week tabs, the notes and demo videos, Kirst's message and the ScoutCo HQ tab. There are no ticks, weights, comments, check-ins, profile, videos, Lift Club, agreement or nutrition, and nothing a player does is sent to the sheet, so one player can never change what another sees. The team stays out of the Monday email, the Profiles tab, your coach Clients tab and the Home swaps tab. "Last opened" still updates, so you can see the link is being used.
+A team link is read only. Players see only the program: the week tabs, the notes and demo videos, and Kirst's message. There are no ticks, weights, comments, check-ins, profile, videos, Lift Club, agreement, nutrition or ScoutCo HQ tab, and nothing a player does is sent to the sheet, so one player can never change what another sees. The team stays out of the Monday email, the Profiles tab, your coach Clients tab and the Home swaps tab. "Last opened" still updates, so you can see the link is being used.
 
 Sessions open on today's weekday when the Day name starts with it (e.g. `Tue · Strength 1` opens on a Tuesday). For drills that shouldn't get a YouTube demo button, type `none` in the **Video** column. Demo code: `DEMO-TEAM`.
 
