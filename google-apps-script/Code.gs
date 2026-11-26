@@ -82,10 +82,29 @@ function doGet(e) {
     return json_({ error: "That code wasn't recognised. Check it with Kirst." });
   }
 
+  // A team link (Type "Team") is one code shared by a whole team, so it only ever gets the program.
+  var team = isTeam_(client.Type);
+
   // The Lift Club Community tab loads on its own, so the program stays quick to open.
-  if (e.parameter.community) return json_(communityFeed_(ss, code));
+  if (e.parameter.community) return json_(team ? { me: "", posts: [], people: {} } : communityFeed_(ss, code));
 
   try { recordOpen_(ss, code); } catch (err) { /* the program still loads */ }
+
+  if (team) {
+    var teamProgram = String(client.Program || client.Name || "").trim();
+    var teamRows = readTab_(ss, PROGRAMS_TAB).filter(function (r) {
+      return String(r.Program).trim().toLowerCase() === teamProgram.toLowerCase() && String(r.Exercise).trim() !== "";
+    });
+    var teamBlocks = addStartDates_(ss, teamProgram, groupBlocks_(teamRows));
+    try { addDemoLinks_(teamBlocks); } catch (err) { /* not essential */ }
+    return json_({
+      client: { name: String(client.Name || ""), message: String(client.Message || ""), type: String(client.Type || ""), sessions: String(client.Sessions || "") },
+      program: { name: teamProgram, blocks: teamBlocks },
+      coach: safely_(function () { return coachProfile_(ss); }, null),
+      settings: {},
+      updated: new Date().toISOString()
+    });
+  }
 
   // Group class members (Lift Club, Jr Lift Club) get the weekly class workouts instead of a program.
   var inClass = isClass_(client.Type);
@@ -326,6 +345,8 @@ function onEdit(e) {
 
 function score_(v) { var n = parseInt(v, 10); return n >= 1 && n <= 3 ? n : ""; }
 function isOnline_(type) { return /online/i.test(String(type || "")) && !/\bcoach\b/i.test(String(type || "")); }
+/** Type "Team": one code shared by a whole team. Read only, so it's left out of everything about individual clients. */
+function isTeam_(type) { return /\bteam\b/i.test(String(type || "")) && !isCoach_(type); }
 
 /** A value from the Settings tab (Setting | Value), or "" if it isn't there. */
 function setting_(ss, name) {
@@ -376,6 +397,8 @@ function doPost(e) {
   }
   var client = findClient_(ss, normalise_(body.code));
   if (!client) return json_({ error: "That code wasn't recognised." });
+  // A team link is shared, so nothing sent with it is saved (the app doesn't send anything anyway).
+  if (isTeam_(client.Type)) return json_({ ok: true, saved: (body.events || []).map(function (ev) { return ev && ev.id; }).filter(String) });
 
   // A piece of a video upload (big, so it skips the queue below).
   if (body.video) {
@@ -1244,7 +1267,7 @@ function sendSummary_() {
 
   var clients = readTab_(ss, CLIENTS_TAB).filter(function (c) {
     // Your own Coach schedule isn't a client, so it stays out of the summary.
-    return !isOff_(c.Active) && String(c.Code).trim() !== "" && !/\bcoach\b/i.test(String(c.Type || ""));
+    return !isOff_(c.Active) && String(c.Code).trim() !== "" && !/\bcoach\b/i.test(String(c.Type || "")) && !isTeam_(c.Type);
   });
   var plan = {};
   try { weeksLeftRows_(ss).forEach(function (r) { plan[r.code] = r; }); } catch (err) { /* summary still useful */ }
@@ -1580,7 +1603,13 @@ function syncHomeSwaps_(ss) {
     sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getDisplayValues().forEach(function (r) { have[swapKey_(r[0])] = true; });
   }
   var add = [];
+  // Team programs (a Clients row with Type "Team") have no swaps, so their drills stay off this tab.
+  var teamPrograms = {};
+  readTab_(ss, CLIENTS_TAB).forEach(function (c) {
+    if (isTeam_(c.Type)) teamPrograms[String(c.Program || c.Name || "").trim().toLowerCase()] = true;
+  });
   readTab_(ss, PROGRAMS_TAB).forEach(function (r) {
+    if (teamPrograms[String(r.Program || "").trim().toLowerCase()]) return;
     var name = text_(r.Exercise), k = swapKey_(name);
     if (!k || have[k]) return;
     have[k] = true;
@@ -1605,6 +1634,7 @@ function addDemoLinks_(blocks) {
     b.weeks.forEach(function (w) {
       w.days.forEach(function (d) {
         d.exercises.forEach(function (x) {
+          if (/^(none|no video|-)$/i.test(String(x.video || "").trim())) { x.video = ""; return; } // "none" in the Video column: no button
           if (!x.video && !x.locked && !isGymOnly_(x.name)) x.video = demoLink_(x.name);
           if (x.home && !x.home.video) x.home.video = demoLink_(x.home.name);
         });
@@ -1968,7 +1998,7 @@ function savePb_(ss, client, ev) {
 function syncProfiles_(ss) {
   var sheet = profilesTab_(ss), cols = profileCols_(sheet), added = 0;
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
-    if (!String(c.Code || "").trim() || isOff_(c.Active) || isCoach_(c.Type)) return;
+    if (!String(c.Code || "").trim() || isOff_(c.Active) || isCoach_(c.Type) || isTeam_(c.Type)) return;
     var row = profileRow_(sheet, cols, c, false);
     if (!row) { profileRow_(sheet, cols, c, true); added++; }
     else {
@@ -2090,7 +2120,7 @@ function clientProfiles_(ss) {
   var out = [], byCode = {}, profiles = profilesByCode_(ss), salt = safely_(communitySalt_, "");
   readTab_(ss, CLIENTS_TAB).forEach(function (c) {
     var code = normalise_(c.Code);
-    if (!code || isOff_(c.Active) || isCoach_(c.Type)) return;
+    if (!code || isOff_(c.Active) || isCoach_(c.Type) || isTeam_(c.Type)) return;
     var p = profiles[code] || {};
     var row = { name: String(c.Name || ""), type: String(c.Type || ""), photo: p.photo || "", dob: p.dob || "",
       squat: p.squat || "", deadlift: p.deadlift || "", bench: p.bench || "", goals: p.goals || "", hobbies: p.hobbies || "", food: p.food || "",
@@ -2353,7 +2383,7 @@ function sendPush_(ss, ids, title, message, view, url) {
 function pushCommunity_(ss, client, posted) {
   if (!setting_(ss, PUSH_APP_SETTING) || !setting_(ss, PUSH_KEY_SETTING)) return;
   var salt = communitySalt_(), mine = normalise_(client.Code), name = communityName_(client);
-  var everyone = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) && !isOff_(c.Active); })
+  var everyone = readTab_(ss, CLIENTS_TAB).filter(function (c) { return normalise_(c.Code) && !isOff_(c.Active) && !isTeam_(c.Type); })
     .map(function (c) { return normalise_(c.Code); });
   posted.forEach(function (p) {
     var codes = (p.to || everyone).filter(function (c, i, all) { return c && c !== mine && all.indexOf(c) === i && everyone.indexOf(c) !== -1; });
@@ -2557,7 +2587,7 @@ function clientByPersonId_(ss, pid) {
   var salt = communitySalt_(), list = readTab_(ss, CLIENTS_TAB);
   for (var i = 0; i < list.length; i++) {
     var c = list[i];
-    if (normalise_(c.Code) && !isOff_(c.Active) && !isCoach_(c.Type) && personId_(c.Code, salt) === String(pid || "")) return c;
+    if (normalise_(c.Code) && !isOff_(c.Active) && !isCoach_(c.Type) && !isTeam_(c.Type) && personId_(c.Code, salt) === String(pid || "")) return c;
   }
   return null;
 }
